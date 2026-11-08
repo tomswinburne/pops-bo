@@ -22,7 +22,7 @@ const gridN = +opt('grid', 401);
 const grid = B.makeGrid(gridN);
 
 const res = {
-  meta: { nSeeds, iters, noise, region, gridN, nInit: 8, popsVariant: 'exact', eps: 1e-4, gainTol: 0.05,
+  meta: { nSeeds, iters, noise, region, gridN, nInit: 8, popsVariant: 'exact', eps: 1e-4, gainTol: 0.05, epistemic: true, nEns: 64, tau: 1,
           strategies: Object.fromEntries(strategies.map(s => [s, B.STRATEGIES[s]])), generated: new Date().toISOString() },
   runs: {},
 };
@@ -64,6 +64,36 @@ for (const v of ['exact', 'weighted']) {
   const row = `| ${v} | ${f3(S.median[5])} | ${f3(S.median[iters])} | ${f3(S.mean[iters])} |`;
   console.log(row); md.push(row);
   res.variantCheck = res.variantCheck || {}; res.variantCheck[v] = S;
+}
+
+// Model complexity: POPS + PES with K = 1..4 harmonics and evidence-selected K,
+// against greedy with evidence-selected K and GP-RBF. K = 2 contains f_true exactly.
+res.complexity = {};
+const KS = [1, 2, 3, 4, 'auto'];
+for (const P of periods) for (const delta of deltas.filter(d => d > 0)) {
+  const key = `P=${P},delta=${delta}`;
+  res.complexity[key] = { P, delta, series: {} };
+  const head = `\n### Complexity, P = ${P}, δ = ${delta} (best-measured regret)\n\n| surrogate | median @1 | @3 | @5 | @15 | mean @5 | mean @15 | recommendation median @15 |\n|---|---|---|---|---|---|---|---|`;
+  console.log(head); md.push(head);
+  const rows = KS.map(K => ['pops-pes', K]).concat([['greedy', 'auto'], ['gp-ei', 1]]);
+  for (const [s, K] of rows) {
+    const name = s === 'gp-ei' ? 'GP-RBF + EI' : `${s === 'greedy' ? 'Greedy' : 'POPS + PES'}, K = ${K === 'auto' ? 'auto (evidence)' : K}`;
+    const id = s === 'gp-ei' ? 'gp-ei' : `${s}:K=${K}`;
+    if (res.runs[key] && s === 'gp-ei') { // reuse
+      const S = res.runs[key].strategies['gp-ei'];
+      res.complexity[key].series[id] = { name, best: S.best, rec: S.rec };
+    } else {
+      const R = [], PR = [];
+      for (let seed = 1; seed <= nSeeds; seed++) {
+        const c = B.campaign({ strategy: s, delta, noise, seed, iters, grid, region, period: P, K });
+        R.push(c.regret); PR.push(c.predOptRegret);
+      }
+      res.complexity[key].series[id] = { name, best: summarise(R), rec: summarise(PR) };
+    }
+    const S = res.complexity[key].series[id].best, SP = res.complexity[key].series[id].rec;
+    const row = `| ${name} | ${f3(S.median[1])} | ${f3(S.median[3])} | ${f3(S.median[5])} | ${f3(S.median[iters])} | ${f3(S.mean[5])} | ${f3(S.mean[iters])} | ${f3(SP.median[iters])} |`;
+    console.log(row); md.push(row);
+  }
 }
 
 fs.writeFileSync(path.join(__dirname, 'results.json'), JSON.stringify(res));

@@ -94,12 +94,19 @@
     const w = 2 * Math.PI / PERIOD;
     return 0.3 * x + Math.sin(w * x + 0.3) + delta * Math.sin(2 * w * x + 0.7);
   }
-  // Surrogate features: f_theta(x) = th0 + th1 x + th2 sin(2pi x/P) + th3 cos(2pi x/P)
-  function features(x) {
-    const w = 2 * Math.PI / PERIOD;
-    return [1, x, Math.sin(w * x), Math.cos(w * x)];
+  /*
+   * Surrogate features with complexity K (number of harmonics), p = 2 + 2K parameters:
+   *   f_theta(x) = th0 + th1 x + sum_{k=1..K} [a_k sin(2 pi k x/P) + b_k cos(2 pi k x/P)]
+   * K = 1 is the spec model (misspecified for delta != 0); K = 2 contains f_true exactly;
+   * K >= 3 is over-parameterised.
+   */
+  function features(x, K) {
+    K = K || 1;
+    const w = 2 * Math.PI / PERIOD, f = [1, x];
+    for (let k = 1; k <= K; k++) f.push(Math.sin(k * w * x), Math.cos(k * w * x));
+    return f;
   }
-  const NP = 4;
+  const kOf = theta => (theta.length - 2) / 2;
 
   function makeGrid(n) {
     const g = new Float64Array(n);
@@ -129,6 +136,7 @@
    *       the targeted point's loss weight multiplied by `upweight` (default 10).
    */
   function solveRidge(X, y, w, lambda) {
+    const NP = X[0].length;
     const A = [], b = new Float64Array(NP);
     for (let a = 0; a < NP; a++) A.push(new Float64Array(NP));
     for (let n = 0; n < X.length; n++) {
@@ -142,27 +150,87 @@
     const L = cholesky(A);
     return { theta: cholSolve(L, b), L };
   }
+  function backSolveT(L, b) { // solve L^T x = b
+    const n = L.length, x = new Float64Array(n);
+    for (let i = n - 1; i >= 0; i--) {
+      let s = b[i];
+      for (let k = i + 1; k < n; k++) s -= L[k][i] * x[k];
+      x[i] = s / L[i][i];
+    }
+    return x;
+  }
+  // Ridge penalty = Gaussian prior theta ~ N(0, tau^2 I) with known noise: lambda = sigma_n^2 / tau^2.
+  const defaultLambda = (noise, tau) => Math.max((noise || 0) ** 2 / (tau || 1) ** 2, 1e-6);
 
+  /*
+   * Bayesian model evidence for complexity K, with prior theta ~ N(0, tau^2 I) and known
+   * noise sigma_n (the same prior that defines the ridge penalty lambda = sigma_n^2/tau^2):
+   *   log p(y|K) = -[y.y - y.Phi theta*]/(2 sigma^2) - 1/2 log|A| + p/2 log(lambda) - N/2 log(2 pi sigma^2)
+   * with A = Phi^T Phi + lambda I. The Occam factor penalises unneeded harmonics; the data-fit
+   * term penalises a model whose residuals exceed the noise (misspecification).
+   */
+  function logEvidence(xs, ys, K, noise, tau) {
+    tau = tau || 1;
+    const s2 = Math.max(noise * noise, 1e-8), lambda = s2 / (tau * tau);
+    const X = xs.map(x => features(x, K)), N = X.length, p = X[0].length;
+    const base = solveRidge(X, ys, null, lambda);
+    let yy = 0, yPt = 0;
+    for (let n = 0; n < N; n++) { yy += ys[n] * ys[n]; yPt += ys[n] * dot(X[n], base.theta); }
+    let logdetA = 0; for (let a = 0; a < p; a++) logdetA += 2 * Math.log(base.L[a][a]);
+    return -(yy - yPt) / (2 * s2) - 0.5 * logdetA + 0.5 * p * Math.log(lambda) - 0.5 * N * Math.log(2 * Math.PI * s2);
+  }
+  function selectK(xs, ys, Kmax, noise, tau) {
+    const logEv = [];
+    for (let K = 1; K <= Kmax; K++) logEv.push(logEvidence(xs, ys, K, noise, tau));
+    let best = 0; for (let i = 1; i < logEv.length; i++) if (logEv[i] > logEv[best]) best = i;
+    return { K: best + 1, logEv };
+  }
+
+  /*
+   * Ensemble = POPS members (misspecification) (+) epistemic draws (finite data).
+   *   POPS member i: theta_i as above (one per observation).
+   *   epistemic (default on): xi ~ N(0, sigma_n^2 A^{-1}), the Bayesian ridge posterior
+   *   covariance with known noise. nEns members, member m = theta_{m mod N} + xi_m.
+   *   This mirrors popsregression, whose predictive variance is misspecification + epistemic.
+   *   With p >= N the POPS corrections vanish (the fit interpolates), so without the
+   *   epistemic term a complex model would look spuriously certain.
+   */
   function fitPOPS(xs, ys, opts) {
     opts = opts || {};
-    const lambda = opts.lambda != null ? opts.lambda : 1e-4;
+    const K = opts.K || 1;
+    const lambda = opts.lambda != null ? opts.lambda : defaultLambda(opts.noise, opts.tau);
     const variant = opts.variant || 'exact';
     const upweight = opts.upweight || 10;
-    const X = xs.map(features), N = xs.length;
+    const X = xs.map(x => features(x, K)), N = xs.length, NP = X[0].length;
     const base = solveRidge(X, ys, null, lambda);
     const theta = base.theta;
     const resid = ys.map((y, n) => y - dot(X[n], theta));
-    const members = [];
+    const popsMembers = [];
     for (let i = 0; i < N; i++) {
       if (variant === 'weighted') {
         const w = new Float64Array(N).fill(1);
         w[i] = upweight;
-        members.push(solveRidge(X, ys, w, lambda).theta);
+        popsMembers.push(solveRidge(X, ys, w, lambda).theta);
       } else {
         const Ainv_phi = cholSolve(base.L, X[i]);
         const h = Math.max(dot(X[i], Ainv_phi), 1e-12);
         const c = resid[i] / h;
-        members.push(Float64Array.from(theta, (t, a) => t + c * Ainv_phi[a]));
+        popsMembers.push(Float64Array.from(theta, (t, a) => t + c * Ainv_phi[a]));
+      }
+    }
+    let members = popsMembers, parent = popsMembers.map((_, i) => i);
+    const epistemic = opts.epistemic !== false && (opts.noise || 0) > 0;
+    if (epistemic) {
+      const M = Math.max(opts.nEns || 64, N);
+      const rng = mulberry32(9973 * N + 131 * K + 7);
+      members = []; parent = [];
+      for (let m = 0; m < M; m++) {
+        const z = new Float64Array(NP);
+        for (let a = 0; a < NP; a++) z[a] = opts.noise * rng.normal();
+        const xi = backSolveT(base.L, z);
+        const i = m % N;
+        members.push(Float64Array.from(popsMembers[i], (t, a) => t + xi[a]));
+        parent.push(i);
       }
     }
     // Likelihood scale: residual variance of the base fit (misspecification + noise),
@@ -171,12 +239,12 @@
     let rss = 0;
     for (const r of resid) rss += r * r;
     const sigma2 = Math.max(rss / dof, (opts.noise || 0) ** 2, 1e-10);
-    return { theta, members, resid, sigma2, X, ys };
+    return { theta, members, popsMembers, parent, resid, sigma2, X, ys, K, lambda, epistemic };
   }
 
   function predictTheta(theta, xg) {
-    const out = new Float64Array(xg.length);
-    for (let g = 0; g < xg.length; g++) out[g] = dot(features(xg[g]), theta);
+    const K = kOf(theta), out = new Float64Array(xg.length);
+    for (let g = 0; g < xg.length; g++) out[g] = dot(features(xg[g], K), theta);
     return out;
   }
   function argmax(a) { let b = 0; for (let i = 1; i < a.length; i++) if (a[i] > a[b]) b = i; return b; }
@@ -195,21 +263,26 @@
    *  measurement.
    */
   function popsState(pops, grid) {
-    const M = pops.members.length;
+    const M = pops.members.length, N = pops.popsMembers.length;
     const curves = pops.members.map(th => predictTheta(th, grid));
     const xstar = curves.map(c => grid[argmax(c)]);
-    const logw0 = new Float64Array(M);
+    // Data log-likelihood of each POPS parent (paper's rule); epistemic children share their
+    // parent's weight (they are already posterior draws, so re-weighting them would double count).
+    const parentLog = new Float64Array(N);
     if (pops.useDataLik !== false) {
-      for (let j = 0; j < M; j++) {
+      for (let i = 0; i < N; i++) {
         let s = 0;
         for (let n = 0; n < pops.X.length; n++) {
-          const r = pops.ys[n] - dot(pops.X[n], pops.members[j]);
+          const r = pops.ys[n] - dot(pops.X[n], pops.popsMembers[i]);
           s += r * r;
         }
-        logw0[j] = -s / (2 * pops.sigma2);
+        parentLog[i] = -s / (2 * pops.sigma2);
       }
     }
-    const w0 = softmax(Array.from(logw0));
+    const count = new Float64Array(N);
+    for (const i of pops.parent) count[i]++;
+    const logw0 = Array.from(pops.parent, i => parentLog[i] - Math.log(count[i]));
+    const w0 = softmax(logw0);
     return { curves, xstar, logw0, w0, M };
   }
 
@@ -223,18 +296,21 @@
   function pesAcquisition(st, grid, sigma2, eps) {
     const { curves, xstar, logw0, w0, M } = st;
     const H0 = gaussEntropy(weightedVar(xstar, w0), eps);
-    const EH = new Float64Array(grid.length);
-    const lw = new Array(M);
-    for (let g = 0; g < grid.length; g++) {
+    const G = grid.length, EH = new Float64Array(G);
+    const lw = new Float64Array(M), col = new Float64Array(M), inv2s = 1 / (2 * sigma2);
+    for (let g = 0; g < G; g++) {
+      for (let j = 0; j < M; j++) col[j] = curves[j][g];
       let acc = 0;
       for (let k = 0; k < M; k++) {
-        const yk = curves[k][g];
-        for (let j = 0; j < M; j++) {
-          const d = curves[j][g] - yk;
-          lw[j] = logw0[j] - d * d / (2 * sigma2);
-        }
-        const w = softmax(lw);
-        acc += w0[k] * gaussEntropy(weightedVar(xstar, w), eps);
+        if (w0[k] < 1e-12) continue;
+        const yk = col[k];
+        let mx = -Infinity;
+        for (let j = 0; j < M; j++) { const d = col[j] - yk; const l = logw0[j] - d * d * inv2s; lw[j] = l; if (l > mx) mx = l; }
+        // log-sum-exp normalised weights -> weighted mean / variance of x*
+        let Z = 0, m1 = 0, m2 = 0;
+        for (let j = 0; j < M; j++) { const w = Math.exp(lw[j] - mx); Z += w; m1 += w * xstar[j]; m2 += w * xstar[j] * xstar[j]; }
+        m1 /= Z; const v = Math.max(m2 / Z - m1 * m1, 0);
+        acc += w0[k] * gaussEntropy(v, eps);
       }
       EH[g] = acc;
     }
@@ -366,7 +442,11 @@
     if (s === 'pops-pes-raw') { cfg = { ...cfg, eps: (grid[1] - grid[0]) ** 2 / 12, gainTol: 0 }; s = 'pops-pes'; }
     const out = { strategy: s };
     if (s.startsWith('pops') || s === 'greedy') {
-      const pops = fitPOPS(xs, ys, { variant: cfg.popsVariant, noise: cfg.noise, lambda: cfg.lambda });
+      const lam = cfg.lambda != null ? cfg.lambda : defaultLambda(cfg.noise, cfg.tau);
+      let K = cfg.K || 1;
+      if (K === 'auto') { const sel = selectK(xs, ys, cfg.Kmax || 4, cfg.noise, cfg.tau); K = sel.K; out.logEv = sel.logEv; }
+      out.K = K;
+      const pops = fitPOPS(xs, ys, { variant: cfg.popsVariant, noise: cfg.noise, lambda: lam, K, epistemic: cfg.epistemic, nEns: cfg.nEns });
       pops.useDataLik = cfg.useDataLik;
       const st = popsState(pops, grid);
       const stats = ensembleStats(st, grid);
@@ -485,7 +565,7 @@
 
   return {
     get PERIOD() { return PERIOD; }, setPeriod, fTrue, features, makeGrid, trueOptimum, fitPOPS, popsState, pesAcquisition,
-    ensembleStats, predictTheta, fitGP, predictGP, expectedImprovement, propose,
+    ensembleStats, predictTheta, logEvidence, selectK, defaultLambda, fitGP, predictGP, expectedImprovement, propose,
     initialDesign, observe, campaign, startCampaign, proposeNext, applyProposal, mulberry32, quantile, STRATEGIES, argmax,
   };
 });
