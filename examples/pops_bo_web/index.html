@@ -133,7 +133,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
 <div class="wrap">
 <header>
   <h1>POPS Bayesian Optimization</h1>
-  <p class="lede">A misspecified but structured surrogate, its POPS ensemble, and approximate predictive entropy search (PES) over the location of the optimum, compared with GP expected improvement on a periodic 1-D response.</p>
+  <p class="lede">A structured but misspecified surrogate of adjustable complexity, its POPS ensemble, and approximate predictive entropy search (PES) over the location of the optimum, compared with GP expected improvement on a noisy periodic 1-D response.</p>
   <p class="cite">Method: Lee, J., Augustine, L. J., Yang, P., and Perez, D. (2026). <i>Efficient Bayesian Optimization of Separation Chemistry in the Scarce-Data Regime Using Kinetic Reaction Networks.</i> ChemRxiv, preprint, July 13, 2026. <a href="https://doi.org/10.26434/chemrxiv.15004837/v2">doi:10.26434/chemrxiv.15004837/v2</a> (Eqs. 6–12, Figs. 3–4).</p>
 </header>
 
@@ -263,20 +263,31 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
 <section class="prose" aria-labelledby="findH">
   <h2 id="findH">What the comparison shows</h2>
   <div id="findings" class="prose">
-<h3>Short answer</h3>
-<p>In this toy, the structured model provides most of the benefit. POPS + PES adds robustness over the point estimate when the model is clearly misspecified. It does not beat a nonparametric GP that is given the same structural prior.</p>
-<h3>1 · A structured surrogate extrapolates where a stationary GP must explore</h3>
-<p>With 8 points in x ∈ [0, 0.5], the parametric model already places its optimum in the last period near x ≈ 1. At P = 0.2, δ = 0.12, POPS + PES has median best-measured regret 0.023 at iteration 3, against 0.139 for GP-RBF + EI. The RBF GP spends roughly 8–10 experiments finding the far peak; at P = 0.45 (spec) there are only ~2 periods, so it needs about 5. The parametric methods win in the scarce-data regime of Lee et al.</p>
-<h3>2 · POPS represents model-form error, and that error sets a floor</h3>
-<p>The POPS spread grows with δ and vanishes at δ = 0 (all members collapse onto the true parameters). The same misspecification also biases the location of every member's optimum. No measurement within the model class removes that bias, so all parametric strategies plateau: around 0.02 regret at δ = 0.12 and around 0.09–0.13 at δ = 0.3. The RBF GP passes them after about 10 iterations. The POPS spread in x* is a few grid cells, typically narrower than the bias, so it signals the inadequacy but does not bound it.</p>
-<h3>3 · PES targets disagreement about x*, not response variance</h3>
-<p>The acquisition panel overlays POPS predictive sd: PES maxima rarely coincide with the sd maxima. Early on, members often split between the peak near x ≈ 0.09 and the one near x ≈ 1, and PES measures where that split is decided. Against the greedy θ* ablation, this matters when δ is large. At δ = 0.3, P = 0.45, POPS + PES has median 0.091 versus 0.119 and mean 0.097 versus 0.153 at iteration 15, because greedy occasionally re-measures one wrong point forever. At δ ≤ 0.12 the two are tied. The response-variance control (POPS + UCB) does about as well as PES on this problem, so the gain comes from POPS uncertainty more than from the entropy criterion specifically.</p>
-<h3>Parametric prior versus POPS + PES</h3>
+<h3>Setup</h3>
+<p>The truth is a periodic response with harmonics up to k = 8, amplitude δ·ρ^(k−2), plus noise σ = 0.05. Every finite-K surrogate is therefore misspecified, by an amount that shrinks with K. Setting ρ = 0 recovers the original spec function, for which K = 2 is exact. The numbers below are 40-seed medians and means of best-measured regret at P = 0.45; P = 0.2 behaves the same way (toggle above).</p>
+<h3>1 · Complexity trades early certainty for late accuracy</h3>
+<p>With POPS + PES at fixed K and δ = 0.3:</p>
 <ul>
-<li><b>Gain from the inductive bias:</b> the parametric methods versus GP-RBF in the first 3–8 experiments. The periodic-kernel GP control, with P known, is best on every panel. It has the same structural prior without a fixed functional form, so it has no bias floor. In this toy the prior can be written as a kernel; for a kinetic network as in Lee et al. it generally cannot.</li>
-<li><b>Gain from POPS + PES:</b> the difference between POPS + PES and greedy θ*. That difference is zero at δ ≤ 0.12, positive at δ = 0.3, and mostly a reduction in bad-seed tail risk (mean, upper quartile) rather than in the median.</li>
-<li><b>Paper-literal PES</b> (grid-scale ε, no exploitation rule) keeps measuring wherever any residual x* disagreement remains. Its recommendation regret matches POPS + PES, but its best-measured regret is much worse. The default variant uses ε = 0.01² (the x* resolution we care about) and measures the predicted optimum once the expected gain falls below 0.05 nats. This generalises the paper's tie-break rule and is our modification.</li>
-<li><b>Limitation:</b> with initial data in [0, 0.35] (less than one period), the 8 POPS members can all extrapolate the wrong trend and agree on the wrong peak. In that case H[x*] ≈ 0 and PES has nothing to resolve. POPS only reflects misfit that the observed residuals reveal.</li>
+<li>K = 1 is the fastest start, but it plateaus at a regret of 0.031. Its POPS envelope stays wide at the level of the harmonics it omits.</li>
+<li>K = 4 is slower at iteration 3 (0.051), because its epistemic envelope starts wide, but it reaches 0.001 by iteration 15.</li>
+<li>K = 6 is slower again (0.125 at iteration 3).</li>
+</ul>
+<p>Choosing K each step by Bayesian evidence follows the lower envelope of these curves: 0.014 at iteration 3 and 0.004 at iteration 15. The selected K grows with N; see the complexity panel above.</p>
+<h3>2 · A structured surrogate extrapolates where a stationary GP must explore</h3>
+<p>Every parametric method finds the far peak from 8 points in [0, 0.5]. GP-RBF + EI has regret 0.139 at iteration 3 and 0.092 at iteration 5. The parametric methods are ahead for the first 5–8 experiments, and GP-RBF catches up by about iteration 10. The periodic-kernel GP, given P, is the strongest baseline throughout. It has the same structural prior without a fixed functional form.</p>
+<h3>3 · POPS uncertainty versus the point estimate</h3>
+<p>Both methods use evidence-chosen K. At δ = 0.3, POPS + PES beats greedy θ*:</p>
+<ul>
+<li>P = 0.45: mean regret at iteration 15 is 0.010 against 0.048, and the median is 0.004 against 0.011.</li>
+<li>P = 0.2: mean regret at iteration 15 is 0.011 against 0.036.</li>
+</ul>
+<p>Greedy keeps re-measuring a biased optimum on some seeds; POPS + PES does not. POPS + UCB, the response-variance control, performs about the same as PES, so the gain comes mostly from the ensemble rather than from the entropy criterion. At δ ≤ 0.12 the differences are small. The acquisition panel shows that PES maxima are generally not where the predictive sd peaks.</p>
+<h3>Caveats</h3>
+<ul>
+<li>Paper-literal PES (grid-scale ε, no exploitation rule) explores indefinitely. Its recommendation regret matches POPS + PES, but its best-measured regret is much worse. The default uses ε = 0.01² and measures the predicted optimum once the expected gain is below 0.05 nats; this is our modification.</li>
+<li>The ensemble is POPS plus Bayesian-ridge epistemic draws, as in <code>popsregression</code>. Without the epistemic term, a model with p ≥ N interpolates the data and looks spuriously certain.</li>
+<li>BO data cluster near the optimum, so the global fit improves slowly once the method starts exploiting. The evidence then stops increasing K.</li>
+<li>With initial data spanning less than one period, the members can all agree on the wrong peak. In that case H[x*] ≈ 0 and PES has nothing to resolve.</li>
 </ul>
 </div>
 </section>

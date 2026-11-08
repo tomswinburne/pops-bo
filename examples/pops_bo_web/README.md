@@ -29,22 +29,21 @@ node validate.js --seeds 10 --periods 0.45 --deltas 0.12   # quick
 
 ## Problem
 
-The true response is
+The truth is a periodic response with a decaying harmonic series, observed with Gaussian noise σ = 0.05:
 
-$$f_\text{true}(x) = 0.3x + \sin(2\pi x/P + 0.3) + \delta\sin(4\pi x/P + 0.7),\qquad x\in[0,1],$$
+$$f_\text{true}(x) = 0.3x + \sin(2\pi x/P + 0.3) + \delta\sum_{k=2}^{8}\rho^{k-2}\sin(2\pi k x/P + \phi_k),\qquad x\in[0,1],$$
 
-The surrogate knows the fundamental period but omits the harmonic:
+with $\phi_2 = 0.7$ and $\phi_k = 0.7 + 1.9(k-2)$.
 
-$$f_\theta(x) = \theta_0 + \theta_1 x + \theta_2\sin(2\pi x/P) + \theta_3\cos(2\pi x/P).$$
+- **ρ = 0** recovers the spec function, which has only the 2nd harmonic.
+- **ρ = 0.6** is the default. Every finite-K surrogate is then misspecified, by an amount that shrinks with K.
+- **Defaults:** δ = 0.3, P = 0.45 (spec value); P = 0.2 (5 periods) is also reported.
 
-Setup:
-- 8 initial points, stratified-random in x ∈ [0, 0.5] by default.
-- Gaussian observation noise σ = 0.05.
-- 401-point candidate grid shared by all methods.
-- 15 BO iterations.
-- Per seed, every strategy sees the same initial design and the same noise draws.
+The surrogate has complexity K (number of harmonics, $p = 2 + 2K$):
 
-**Period.** The spec value is P = 0.45, giving about 2.2 periods on [0, 1]. We also report P = 0.2 (5 periods), a transparent adjustment explained under Results.
+$$f_\theta(x) = \theta_0 + \theta_1 x + \sum_{k=1}^{K}\big[a_k\sin(2\pi kx/P) + b_k\cos(2\pi kx/P)\big].$$
+
+K = 1 is the spec surrogate. K is set by a slider (1–6), or chosen at every step by the Bayesian evidence (the default). Every method starts from 8 points, stratified-random in x ∈ [0, 0.5]. The candidate grid has 401 points and campaigns run 15 BO iterations. For each seed, every strategy sees the same initial design and the same noise draws.
 
 ## Method (mapping to Lee et al.)
 
@@ -54,6 +53,17 @@ $\theta_i=\arg\min L$ subject to $\phi_i\cdot\theta=y_i$. Two variants:
 - **Default, exact.** The analytic rank-one correction
   $\theta_i=\theta_*+A^{-1}\phi_i\,e_i/(\phi_i^\top A^{-1}\phi_i)$, where $A=\Phi^\top\Phi+\lambda I$ and $e_i=y_i-\phi_i\cdot\theta_*$. This is the same pointwise correction used in `popsregression`.
 - **Eq. 6 approximation.** Refit with 10× loss weight on point i. Select it with `popsVariant: 'weighted'` or "POPS construction" in the UI. Results are indistinguishable from the exact variant (see `results.md`).
+
+**Epistemic term.** The ensemble is POPS ⊕ Bayesian-ridge epistemic draws, as in `popsregression`, whose predictive variance is misspecification + epistemic.
+
+- The prior is $\theta\sim\mathcal N(0,\tau^2 I)$ with τ = 1, so the ridge penalty is $\lambda = \sigma_n^2/\tau^2$.
+- There are 64 members: member m is $\theta_{m \bmod N} + \xi_m$, with $\xi_m\sim\mathcal N(0,\sigma_n^2A^{-1})$.
+- Epistemic children share their POPS parent's likelihood weight, so they are not double-counted.
+- Without this term, a model with $p \ge N$ interpolates the data, the POPS corrections vanish, and complex models look spuriously certain.
+
+**Model selection.** K is chosen by the log evidence
+$\log p(y\mid K) = -\frac{y^\top y - y^\top\Phi\theta_*}{2\sigma_n^2} - \tfrac12\log|A| + \tfrac p2\log\lambda - \tfrac N2\log 2\pi\sigma_n^2$.
+This was checked against the direct $\mathcal N(0,\sigma_n^2 I+\tau^2\Phi\Phi^\top)$ density. Leave-one-out was also tried; it drifted to over-complex K.
 
 **Approximate PES (Eqs. 7–12).**
 
@@ -80,36 +90,39 @@ During acquisition only the weights change. POPS is refitted after each real mea
 
 **Note on sources.** The paper could not be downloaded in the environment where this was built. The equation mapping above follows the specification we were given (Eqs. 6–12, Figs. 3–4); check the numbering against the published version.
 
-## Results (40 seeds; full tables in `results.md`)
+## Results (40 seeds; full tables in `results.md`, regenerate with `node validate.js`)
 
-Median best-measured regret, with mean in parentheses:
+Best-measured regret at P = 0.45, δ = 0.3, ρ = 0.6. The first five rows are POPS + PES with fixed K.
 
-| | iter 3 | iter 15 |
-|---|---|---|
-| **P=0.45, δ=0.12:** POPS+PES / greedy / GP-RBF / GP-periodic | 0.020 / 0.020 / 0.058 / 0.002 | 0.020 (0.022) / 0.020 (0.034) / 0.000 / 0.000 |
-| **P=0.45, δ=0.3:** POPS+PES / greedy / GP-RBF | 0.109 / 0.128 / 0.139 | 0.091 (0.097) / 0.119 (0.153) / 0.001 |
-| **P=0.2, δ=0.12:** POPS+PES / greedy / GP-RBF | 0.023 / 0.023 / 0.139 | 0.023 / 0.023 / 0.001 |
-| **δ=0 (both P):** all parametric | ≈0 | ≈0 |
-
-Why P = 0.2 is also reported:
-- At P = 0.45 there are only ~2 periods to explore, so a stationary GP finds the far peak within about 5 experiments. That leaves little scarce-data window.
-- The regret floor from the model's location bias scales as curvature × shift² ∝ (1/P²)·P², so it is independent of P.
-- The GP's exploration cost grows with the number of periods.
-- P = 0.2 therefore widens the window in which a structured model matters, without favouring POPS in any other way. Both settings are reported.
+| surrogate | median @3 | median @15 | mean @15 |
+|---|---|---|---|
+| K = 1 | 0.031 | 0.031 | 0.032 |
+| K = 2 | 0.013 | 0.008 | 0.011 |
+| K = 4 | 0.051 | 0.001 | 0.002 |
+| K = 6 | 0.125 | 0.003 | 0.005 |
+| K by evidence | 0.014 | 0.004 | 0.010 |
+| greedy θ\*, K by evidence | 0.022 | 0.011 | 0.048 |
+| POPS + UCB, K by evidence | 0.022 | 0.000 | 0.013 |
+| GP-RBF + EI | 0.139 | 0.000 | 0.001 |
+| GP-periodic (known P) + EI | 0.003 | 0.000 | 0.002 |
 
 ### Answer to the principal question
 
-Does representing model-form uncertainty through POPS improve experimental selection beyond simply using a structured surrogate? In this toy, only modestly, and only when misspecification is large.
+1. **The structured surrogate extrapolates.** From 8 points in [0, 0.5], the parametric methods find the far peak immediately. GP-RBF needs about 5 experiments at P = 0.45 and 8–10 at P = 0.2. This advantage comes from the inductive bias.
+2. **Complexity trades early certainty for late accuracy.**
+   - Low K: narrow initial POPS envelope, but a regret plateau set by the omitted harmonics.
+   - High K: wide initial (epistemic) envelope that keeps shrinking.
+   - The evidence-chosen K grows with N and tracks the lower envelope of the fixed-K curves.
+   - The complexity panel in the UI shows envelope, true error and evidence against N for every K on the current campaign.
+3. **POPS uncertainty vs the point estimate.**
+   - Effect size: with evidence-chosen K at δ = 0.3, POPS + PES cuts mean regret at iteration 15 by about 4–5×: 0.010 vs 0.048 at P = 0.45 and 0.011 vs 0.036 at P = 0.2. The gain comes from removing seeds where greedy stays locked on a biased optimum.
+   - POPS + UCB performs about as well as PES, so most of the gain comes from the ensemble, not from the entropy criterion. At δ ≤ 0.12 the gaps are small.
+   - Paper-literal PES (`pops-pes-raw`) keeps exploring and has much worse best-measured regret.
+4. **Controls.** GP-RBF catches up by about 10 iterations. The periodic-kernel GP with known P is the strongest method throughout, because it has the structural prior without a fixed form. In this toy the prior is expressible as a kernel; for mechanistic models like the kinetic networks in Lee et al. it generally is not.
+5. **Limitations.**
+   - BO data cluster near the optimum, so the global fit (and the evidence for higher K) improves slowly once the method starts exploiting.
+   - With initial data spanning less than one period, the members can agree on a wrong peak. Then H[x\*] ≈ 0 and PES has nothing to resolve.
 
-1. **The structured surrogate extrapolates.** With data in [0, 0.5], every parametric method locates the far peak at once. The RBF GP needs about 5 (P=0.45) or 8–10 (P=0.2) experiments. This is the parametric inductive bias, and it accounts for nearly all of the early advantage.
-2. **POPS tracks model-form error, which is also a floor.**
-   - The ensemble collapses at δ = 0 and widens with δ.
-   - The same misspecification biases the optimum location of every member, and no experiment within the model class can remove that bias.
-   - Parametric methods plateau at ≈0.02 (δ=0.12) and ≈0.1 (δ=0.3) regret, and GP-RBF overtakes them after about 10 iterations.
-   - The POPS spread in x\* signals this inadequacy but is narrower than the bias.
-3. **PES targets x\* disagreement, not predictive variance.** The acquisition plot overlays the POPS sd to show this.
-   - Versus greedy θ\*: tied at δ ≤ 0.12. Better at δ = 0.3 (median 0.091 vs 0.119, mean 0.097 vs 0.153), mainly by removing seeds where greedy keeps re-measuring a wrong point.
-   - POPS + UCB performs about the same as PES here. The gain is attributable to POPS uncertainty more than to the entropy criterion.
-   - Paper-literal PES (`pops-pes-raw`) has the same recommendation regret but poor best-measured regret, because it never stops exploring.
-4. **Control.** The periodic-kernel GP, given the same period knowledge, wins every panel: structural prior, no fixed functional form, no bias floor. Here the prior is expressible as a kernel. For mechanistic models like the kinetic networks in Lee et al. it usually is not, which is where POPS-based BO has a clearer role.
-5. **Limitation.** With initial data spanning less than one period (x ∈ [0, 0.35]), all 8 members can extrapolate the wrong trend and agree on a wrong peak. Then H[x\*] ≈ 0 and PES has nothing to resolve. POPS only reflects misfit that the residuals reveal. Try it with "Initial 8 points" in the UI.
+## Viewing on a phone
+
+Open the published artifact link in the Claude app or a phone browser. For a public URL, enable GitHub Pages on this repository and serve `examples/pops_bo_web/`. The page is static and needs no build step.
