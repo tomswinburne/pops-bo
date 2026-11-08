@@ -90,9 +90,27 @@
   // configurations; set via setPeriod() / cfg.period (all calls are synchronous).
   let PERIOD = 0.45;
   function setPeriod(P) { if (P != null) PERIOD = P; return PERIOD; }
+  /*
+   * Truth: fundamental + decaying harmonic series (Fourier content up to K_TRUE = 8):
+   *   f(x) = 0.3x + sin(w x + 0.3) + delta * sum_{k=2..8} rho^(k-2) sin(k w x + phi_k),  w = 2 pi/P
+   * phi_2 = 0.7, phi_k = 0.7 + 1.9 (k-2). rho = 0 recovers the spec function (2nd harmonic only);
+   * rho > 0 makes every finite-K surrogate misspecified, with a residual that shrinks with K.
+   */
+  let RHO = 0.6;
+  const K_TRUE = 8;
+  function setProblem(cfg) { if (cfg) { setPeriod(cfg.period); if (cfg.rho != null) RHO = cfg.rho; } }
   function fTrue(x, delta) {
     const w = 2 * Math.PI / PERIOD;
-    return 0.3 * x + Math.sin(w * x + 0.3) + delta * Math.sin(2 * w * x + 0.7);
+    let f = 0.3 * x + Math.sin(w * x + 0.3);
+    if (delta) {
+      let a = 1;
+      for (let k = 2; k <= K_TRUE; k++) {
+        if (a < 1e-6) break;
+        f += delta * a * Math.sin(k * w * x + 0.7 + 1.9 * (k - 2));
+        a *= RHO;
+      }
+    }
+    return f;
   }
   /*
    * Surrogate features with complexity K (number of harmonics), p = 2 + 2K parameters:
@@ -437,14 +455,14 @@
    * cfg: {strategy, grid, noise, popsVariant, eps, ucbBeta, eiXi, useDataLik}
    */
   function propose(xs, ys, cfg) {
-    setPeriod(cfg.period);
+    setProblem(cfg);
     const grid = cfg.grid; let s = cfg.strategy;
     if (s === 'pops-pes-raw') { cfg = { ...cfg, eps: (grid[1] - grid[0]) ** 2 / 12, gainTol: 0 }; s = 'pops-pes'; }
     const out = { strategy: s };
     if (s.startsWith('pops') || s === 'greedy') {
       const lam = cfg.lambda != null ? cfg.lambda : defaultLambda(cfg.noise, cfg.tau);
       let K = cfg.K || 1;
-      if (K === 'auto') { const sel = selectK(xs, ys, cfg.Kmax || 4, cfg.noise, cfg.tau); K = sel.K; out.logEv = sel.logEv; }
+      if (K === 'auto') { const sel = selectK(xs, ys, cfg.Kmax || 6, cfg.noise, cfg.tau); K = sel.K; out.logEv = sel.logEv; }
       out.K = K;
       const pops = fitPOPS(xs, ys, { variant: cfg.popsVariant, noise: cfg.noise, lambda: lam, K, epistemic: cfg.epistemic, nEns: cfg.nEns });
       pops.useDataLik = cfg.useDataLik;
@@ -523,7 +541,7 @@
    * same noise draws (initial noise, then one draw per BO iteration).
    */
   function startCampaign(cfg) {
-    setPeriod(cfg.period);
+    setProblem(cfg);
     const delta = cfg.delta, noise = cfg.noise, iters = cfg.iters || 15;
     const grid = cfg.grid || makeGrid(cfg.gridN || 401);
     const xs0 = initialDesign(cfg.seed, cfg.region || [0, 0.5], cfg.nInit || 8);
@@ -564,7 +582,7 @@
   }
 
   return {
-    get PERIOD() { return PERIOD; }, setPeriod, fTrue, features, makeGrid, trueOptimum, fitPOPS, popsState, pesAcquisition,
+    get PERIOD() { return PERIOD; }, get RHO() { return RHO; }, K_TRUE, setPeriod, setProblem, fTrue, features, makeGrid, trueOptimum, fitPOPS, popsState, pesAcquisition,
     ensembleStats, predictTheta, logEvidence, selectK, defaultLambda, fitGP, predictGP, expectedImprovement, propose,
     initialDesign, observe, campaign, startCampaign, proposeNext, applyProposal, mulberry32, quantile, STRATEGIES, argmax,
   };

@@ -28,7 +28,7 @@
   --obs: #1c2320;
   --next: #c4501a;
   --good: #2f7d4a;
-  --k1: #b8901a; --k2: #3f8f6b; --k3: #3b6ea8; --k4: #7a4f9a;   /* complexity K = 1..4 */
+  --k1: #b8901a; --k2: #3f8f6b; --k3: #3b6ea8; --k4: #7a4f9a; --k5: #a8406a; --k6: #5a5f66;   /* complexity K = 1..6 */
   --font-display: "Newsreader", "Iowan Old Style", Georgia, serif;
   --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -39,7 +39,7 @@
     --truth: #e4e9e6; --pops: #f08a52; --pops-soft: rgba(240, 138, 82, .16); --pops-soft2: rgba(240, 138, 82, .3);
     --ucb: #d9a634; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
     --obs: #e4e9e6; --next: #f08a52; --good: #6cc48a; color-scheme: dark;
-    --k1: #e0bf4a; --k2: #5fc296; --k3: #6f9fe0; --k4: #b48ad6;
+    --k1: #e0bf4a; --k2: #5fc296; --k3: #6f9fe0; --k4: #b48ad6; --k5: #e07a9f; --k6: #aab2b8;
   }
 }
 :root[data-theme="dark"] {
@@ -47,7 +47,7 @@
   --truth: #e4e9e6; --pops: #f08a52; --pops-soft: rgba(240, 138, 82, .16); --pops-soft2: rgba(240, 138, 82, .3);
   --ucb: #d9a634; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
   --obs: #e4e9e6; --next: #f08a52; --good: #6cc48a; color-scheme: dark;
-    --k1: #e0bf4a; --k2: #5fc296; --k3: #6f9fe0; --k4: #b48ad6;
+    --k1: #e0bf4a; --k2: #5fc296; --k3: #6f9fe0; --k4: #b48ad6; --k5: #e07a9f; --k6: #aab2b8;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -75,6 +75,7 @@ aside.controls {
 @media (max-width: 860px) { aside.controls { position: static; } }
 .ctl { display: grid; gap: 4px; }
 .ctl label, .ctl .lbl { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; display: flex; justify-content: space-between; gap: 8px; }
+.ctl label .sym { text-transform: none; font-style: italic; letter-spacing: 0; margin-right: auto; }
 .ctl output { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; color: var(--fg); font-weight: 500; }
 select, input[type="number"] { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); width: 100%; }
 input[type="range"] { width: 100%; accent-color: var(--pops); }
@@ -148,26 +149,30 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
     <button id="reset" type="button">Reset</button>
   </div>
   <div class="ctl" id="kBox">
-    <label for="kslider">Model complexity K <output id="kOut">1</output></label>
-    <input id="kslider" type="range" min="1" max="4" step="1" value="1">
+    <label for="kslider">Model complexity <span class="sym">K</span> <output id="kOut">auto</output></label>
+    <input id="kslider" type="range" min="1" max="6" step="1" value="1">
     <div class="toggles">
-      <label><input id="kauto" type="checkbox"> Choose K by Bayesian evidence</label>
+      <label><input id="kauto" type="checkbox" checked> Choose K by Bayesian evidence</label>
       <label><input id="epi" type="checkbox" checked> Add epistemic term</label>
     </div>
   </div>
   <div class="ctl">
-    <label for="delta">Misspecification δ <output id="deltaOut">0.12</output></label>
-    <input id="delta" type="range" min="0" max="0.5" step="0.01" value="0.12">
+    <label for="delta">Harmonic amplitude <span class="sym">δ</span> <output id="deltaOut">0.30</output></label>
+    <input id="delta" type="range" min="0" max="0.6" step="0.01" value="0.3">
   </div>
   <div class="ctl">
-    <label for="period">Period P</label>
+    <label for="rho">Harmonic decay <span class="sym">ρ</span> <output id="rhoOut">0.60</output></label>
+    <input id="rho" type="range" min="0" max="0.85" step="0.05" value="0.6">
+  </div>
+  <div class="ctl">
+    <label for="period">Period <span class="sym">P</span></label>
     <select id="period">
       <option value="0.45" selected>0.45 (spec: ~2.2 periods)</option>
       <option value="0.2">0.2 (adjusted: 5 periods)</option>
     </select>
   </div>
   <div class="ctl">
-    <label for="noise">Observation noise σ</label>
+    <label for="noise">Observation noise <span class="sym">σ</span></label>
     <select id="noise">
       <option value="0.02">0.02</option>
       <option value="0.05" selected>0.05</option>
@@ -368,6 +373,7 @@ function legend(node, items) {
 const cfgFromUI = () => ({
   strategy: $('strategy').value,
   delta: +$('delta').value,
+  rho: +$('rho').value,
   period: +$('period').value,
   noise: +$('noise').value,
   region: $('region').value.split(',').map(Number),
@@ -402,7 +408,7 @@ function computeGhosts(cfg) {
   const next = () => {
     const s = todo.shift(); if (!s) return;
     ghosts[s] = B.campaign({ ...cfg, strategy: s }).bestTrue;
-    B.setPeriod(cfg.period);
+    B.setProblem(cfg);
     drawConv();
     ghostTimer = setTimeout(next, 0);
   };
@@ -595,12 +601,12 @@ let resView = 'strategies';
 function drawResults() {
   if (!R) { $('resMeta').textContent = 'results.js not found: run `node validate.js` to generate it.'; return; }
   const m = R.meta, hasK = !!R.complexity;
-  $('resMeta').innerHTML = `${m.nSeeds} seeded campaigns per panel, ${m.iters} iterations, 8 initial points in x ∈ [${m.region.join(', ')}], noise σ = ${m.noise}, ${m.gridN}-point candidate grid. POPS ensembles include the epistemic term; strategy comparison uses K = 1 (the spec surrogate). Lines: median regret (log scale, floored at 10⁻³); bands: interquartile range. Every strategy sees the same initial design and noise draws per seed.`;
+  $('resMeta').innerHTML = `${m.nSeeds} seeded campaigns per panel, ${m.iters} iterations, 8 initial points in x ∈ [${m.region.join(', ')}], noise σ = ${m.noise}, ${m.gridN}-point candidate grid. Truth: harmonics up to k = 8 with decay ρ = ${m.rho}. POPS ensembles include the epistemic term; in the strategy comparison POPS and greedy choose K by evidence. Lines: median regret (log scale, floored at 10⁻³); bands: interquartile range. Every strategy sees the same initial design and noise draws per seed.`;
   const src = resView === 'complexity' && hasK ? R.complexity : R.runs;
   const keys = Object.keys(src), periods = [...new Set(keys.map(k => src[k].P))];
   if (resP == null || !periods.includes(resP)) resP = periods[0];
   segment($('segP'), periods.map(p => [p, `P = ${p}`]), () => resP, v => resP = v);
-  segment($('segV'), hasK ? [['strategies', 'Strategies (K = 1)'], ['complexity', 'Model complexity K']] : [['strategies', 'Strategies']], () => resView, v => resView = v);
+  segment($('segV'), hasK ? [['strategies', 'Strategies (K by evidence)'], ['complexity', 'Model complexity K']] : [['strategies', 'Strategies']], () => resView, v => resView = v);
   segment($('segM'), [['best', 'Best measured'], ['rec', 'Recommendation']], () => resMetric, v => resMetric = v);
   const grid = $('resGrid'); grid.innerHTML = '';
   const runs = keys.map(k => src[k]).filter(r => r.P === resP);
@@ -611,7 +617,7 @@ function drawResults() {
     const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 400 250'); svg.setAttribute('class', 'plot');
     svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Median regret, delta ${run.delta}`);
     fig.appendChild(svg); grid.appendChild(fig);
-    const label = run.delta === 0 ? 'δ = 0 (correctly specified)' : `δ = ${run.delta}`;
+    const label = run.delta === 0 ? 'δ = 0 (K = 1 is exact)' : `δ = ${run.delta}`;
     regretPlot(svg, seriesFor(run, resView, resMetric), label, m.iters);
   }
   grid.style.gridTemplateColumns = runs.length === 2 ? 'repeat(2, minmax(0, 1fr))' : '';
@@ -638,9 +644,9 @@ let kCache = {};
 function kStats(N) {
   if (kCache[N]) return kCache[N];
   const c = S.cfg, xs = S.xs.slice(0, N), ys = S.ys.slice(0, N);
-  B.setPeriod(c.period);
+  B.setProblem(c);
   const out = { env: [], err: [], logEv: [] };
-  for (let K = 1; K <= 4; K++) {
+  for (let K = 1; K <= 6; K++) {
     const pops = B.fitPOPS(xs, ys, { K, noise: c.noise, variant: c.popsVariant, epistemic: c.epistemic });
     const st = B.popsState(pops, GK), stt = B.ensembleStats(st, GK);
     let e = 0, er = 0;
@@ -657,7 +663,7 @@ function drawK() {
   const mk = (id, key, ylabel, logy, ylim, fmt) => {
     const p = plot($(id), { xlim: [N0, N0 + ITERS], ylim, logy, xticks: [N0, N0 + 5, N0 + 10, N0 + 15], yticks: logy ? [0.01, 0.03, 0.1, 0.3, 1, 3].filter(v => v >= ylim[0] && v <= ylim[1]) : undefined, yfmt: fmt, xlabel: 'observations N', margin: { l: 40, b: 30, t: 20, r: 8 } });
     p.text(p.m.l, 13, ylabel, { fill: css('--fg'), 'font-weight': 600, 'font-size': 11.5 });
-    for (let K = 1; K <= 4; K++) {
+    for (let K = 1; K <= 6; K++) {
       const ys = st.map(s => key === 'dEv' ? Math.max(s[key][K - 1], ylim[0]) : Math.min(Math.max(s[key][K - 1], ylim[0]), ylim[1]));
       p.line(have, ys, { stroke: KCOL(K), 'stroke-width': 1.8 });
       have.forEach((n, i) => p.dot(n, ys[i], 2.2, { fill: KCOL(K) }));
@@ -669,9 +675,9 @@ function drawK() {
   const p3 = mk('pK3', 'dEv', 'log evidence − best K', false, [-30, 2], v => String(v));
   // mark chosen K at each N
   have.forEach((n, i) => { const k = st[i].dEv.indexOf(0); p3.dot(n, 0, 3.6, { fill: 'none', stroke: KCOL(k + 1), 'stroke-width': 1.6, top: true }); });
-  legend($('legK'), [1, 2, 3, 4].map(K => [`K = ${K} (p = ${2 + 2 * K})`, KCOL(K)]));
+  legend($('legK'), [1, 2, 3, 4, 5, 6].map(K => [`K = ${K} (p = ${2 + 2 * K})`, KCOL(K)]));
   const used = P.K != null ? `This step uses K = ${P.K}${S.cfg.K === 'auto' ? ' (evidence)' : ''}. ` : '';
-  $('capK').textContent = used + 'Refits every K on the first N points of this campaign. K = 1 omits the harmonic and is misspecified for δ > 0: its envelope stays wide because of model-form error, and its error plateaus. K = 2 contains f_true. Larger K starts with much wider (epistemic) uncertainty, then narrows below K = 1 as data accumulates. The evidence (right; circles mark the winner) trades data fit against the Occam penalty for extra harmonics.';
+  $('capK').textContent = used + 'Refits every K on the first N points of this campaign. The truth has harmonics up to k = 8 (amplitude δ·ρ^(k−2)), so every K here is misspecified to some degree. Small K has a narrow initial envelope but a plateau set by the harmonics it omits. Large K starts with much wider (epistemic) uncertainty and keeps improving as data accumulates. The evidence (right; circles mark the winner) trades data fit against the Occam penalty, so the selected K grows with N.';
 }
 
 let liveBusy = false;
@@ -689,7 +695,7 @@ function liveRerun() {
     }
     $('progress').textContent = `running ${total - jobs.length} / ${total} campaigns…`;
     if (jobs.length) return setTimeout(tick, 0);
-    B.setPeriod(base.period);
+    B.setProblem(base);
     const series = strategies.map(s => {
       const rs = out[s], q = p => Array.from({ length: ITERS + 1 }, (_, t) => B.quantile(rs.map(r => r[t]), p));
       return [s, { median: q(.5), q25: q(.25), q75: q(.75) }];
@@ -709,7 +715,8 @@ const sel = $('strategy');
 for (const s of ORDER) { const o = document.createElement('option'); o.value = s; o.textContent = B.STRATEGIES[s]; sel.appendChild(o); }
 sel.value = 'pops-pes';
 $('delta').addEventListener('input', () => { $('deltaOut').textContent = (+$('delta').value).toFixed(2); });
-['strategy', 'delta', 'period', 'noise', 'region', 'seed', 'variant', 'kslider', 'kauto', 'epi'].forEach(id => $(id).addEventListener('change', reset));
+$('rho').addEventListener('input', () => { $('rhoOut').textContent = (+$('rho').value).toFixed(2); });
+['strategy', 'delta', 'rho', 'period', 'noise', 'region', 'seed', 'variant', 'kslider', 'kauto', 'epi'].forEach(id => $(id).addEventListener('change', reset));
 const syncK = () => { $('kOut').textContent = $('kauto').checked ? 'auto' : $('kslider').value; $('kslider').disabled = $('kauto').checked;
   $('kBox').classList.toggle('dim', $('strategy').value.startsWith('gp')); };
 ['kslider', 'kauto', 'strategy'].forEach(id => $(id).addEventListener('input', syncK)); syncK();
