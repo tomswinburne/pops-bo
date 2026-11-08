@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>POPS Bayesian Optimization</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: lab-notebook workbench — a sticky control column beside a stack of three linked plots, then a seed-averaged results section. */
+:root {
+  --bg: #f6f7f5;          /* paper, faint green-grey bias */
+  --panel: #ffffff;
+  --fg: #1c2320;
+  --muted: #5d6863;
+  --rule: #d9dedb;
+  --grid: #e8ece9;
+  --truth: #1c2320;
+  --pops: #c4501a;        /* POPS ensemble / PES */
+  --pops-soft: rgba(196, 80, 26, .14);
+  --pops-soft2: rgba(196, 80, 26, .26);
+  --ucb: #9a6b00;
+  --greedy: #6b4fa0;
+  --gp: #2d63a8;
+  --gp-soft: rgba(45, 99, 168, .15);
+  --gpper: #14806f;
+  --obs: #1c2320;
+  --next: #c4501a;
+  --good: #2f7d4a;
+  --font-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131816; --panel: #1a201e; --fg: #e4e9e6; --muted: #98a39e; --rule: #2e3633; --grid: #232a27;
+    --truth: #e4e9e6; --pops: #f08a52; --pops-soft: rgba(240, 138, 82, .16); --pops-soft2: rgba(240, 138, 82, .3);
+    --ucb: #d9a634; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
+    --obs: #e4e9e6; --next: #f08a52; --good: #6cc48a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131816; --panel: #1a201e; --fg: #e4e9e6; --muted: #98a39e; --rule: #2e3633; --grid: #232a27;
+  --truth: #e4e9e6; --pops: #f08a52; --pops-soft: rgba(240, 138, 82, .16); --pops-soft2: rgba(240, 138, 82, .3);
+  --ucb: #d9a634; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
+  --obs: #e4e9e6; --next: #f08a52; --good: #6cc48a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 28px; }
+header { display: grid; gap: 6px; }
+h1 { font: 600 clamp(28px, 4vw, 40px)/1.1 var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 600 24px/1.2 var(--font-display); margin: 0; text-wrap: balance; }
+h3 { font: 600 13px/1.3 var(--font-body); margin: 0; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+p { margin: 0; max-width: 72ch; }
+.lede { color: var(--muted); max-width: 80ch; }
+.cite { font-size: 13px; color: var(--muted); }
+.cite a, a { color: inherit; text-underline-offset: 2px; }
+code, .mono { font-family: var(--font-mono); font-size: .9em; }
+.bench { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 860px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+aside.controls {
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px);
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; display: grid; gap: 14px;
+}
+@media (max-width: 860px) { aside.controls { position: static; } }
+.ctl { display: grid; gap: 4px; }
+.ctl label, .ctl .lbl { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; display: flex; justify-content: space-between; gap: 8px; }
+.ctl output { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; color: var(--fg); font-weight: 500; }
+select, input[type="number"] { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); width: 100%; }
+input[type="range"] { width: 100%; accent-color: var(--pops); }
+.btns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+button { font: 500 14px var(--font-body); padding: 8px 6px; border-radius: 6px; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--pops); border-color: var(--pops); color: #fff; }
+button:hover { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--pops); outline-offset: 2px; }
+.toggles { display: grid; gap: 6px; font-size: 14px; }
+.toggles label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.status { font: 13px/1.45 var(--font-mono); color: var(--muted); border-top: 1px solid var(--rule); padding-top: 10px; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+.status b { color: var(--fg); font-weight: 500; }
+.plots { display: grid; gap: 14px; min-width: 0; }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px 10px; display: grid; gap: 6px; min-width: 0; }
+figure .head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; }
+figcaption { font-size: 13px; color: var(--muted); max-width: 90ch; }
+svg.plot { width: 100%; height: auto; display: block; overflow: visible; font-family: var(--font-body); }
+svg.plot text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 0; border-top: 2px solid currentColor; display: inline-block; }
+.sw.dash { border-top-style: dashed; }
+.sw.band { height: 10px; border: 0; }
+.sw.dot { width: 8px; height: 8px; border-radius: 50%; border: 0; }
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 1000px) { .row2 { grid-template-columns: minmax(0, 1fr); } }
+section.results { display: grid; gap: 16px; }
+.resgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1000px) { .resgrid { grid-template-columns: minmax(0, 1fr); } }
+.resbar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end; }
+.resbar .ctl { min-width: 160px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 6px 10px; background: var(--bg); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.prose { display: grid; gap: 12px; }
+.prose h3 { margin-top: 6px; }
+.prose ol, .prose ul { margin: 0; padding-left: 22px; max-width: 80ch; display: grid; gap: 6px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 560px; }
+th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.win { color: var(--good); font-weight: 600; }
+.progress { font: 13px var(--font-mono); color: var(--muted); }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 14px; display: grid; gap: 6px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>POPS Bayesian Optimization</h1>
+  <p class="lede">A misspecified but structured surrogate, its POPS ensemble, and approximate predictive entropy search (PES) over the location of the optimum, compared with GP expected improvement on a periodic 1-D response.</p>
+  <p class="cite">Method: Lee, J., Augustine, L. J., Yang, P., and Perez, D. (2026). <i>Efficient Bayesian Optimization of Separation Chemistry in the Scarce-Data Regime Using Kinetic Reaction Networks.</i> ChemRxiv, preprint, July 13, 2026. <a href="https://doi.org/10.26434/chemrxiv.15004837/v2">doi:10.26434/chemrxiv.15004837/v2</a> (Eqs. 6–12, Figs. 3–4).</p>
+</header>
+
+<div class="bench">
+<aside class="controls" aria-label="Campaign controls">
+  <div class="ctl">
+    <label for="strategy">Strategy</label>
+    <select id="strategy"></select>
+  </div>
+  <div class="btns">
+    <button id="step" class="primary" type="button">Step</button>
+    <button id="run" type="button">Run all</button>
+    <button id="reset" type="button">Reset</button>
+  </div>
+  <div class="ctl">
+    <label for="delta">Misspecification δ <output id="deltaOut">0.12</output></label>
+    <input id="delta" type="range" min="0" max="0.5" step="0.01" value="0.12">
+  </div>
+  <div class="ctl">
+    <label for="period">Period P</label>
+    <select id="period">
+      <option value="0.45" selected>0.45 (spec: ~2.2 periods)</option>
+      <option value="0.2">0.2 (adjusted: 5 periods)</option>
+    </select>
+  </div>
+  <div class="ctl">
+    <label for="noise">Observation noise σ</label>
+    <select id="noise">
+      <option value="0.02">0.02</option>
+      <option value="0.05" selected>0.05</option>
+      <option value="0.15">0.15</option>
+    </select>
+  </div>
+  <div class="ctl">
+    <label for="region">Initial 8 points</label>
+    <select id="region">
+      <option value="0,0.5" selected>x ∈ [0, 0.5]</option>
+      <option value="0,0.35">x ∈ [0, 0.35]</option>
+      <option value="0.25,0.75">x ∈ [0.25, 0.75]</option>
+      <option value="0,1">x ∈ [0, 1]</option>
+    </select>
+  </div>
+  <div class="ctl">
+    <label for="seed">Seed</label>
+    <input id="seed" type="number" min="1" max="9999" step="1" value="3">
+  </div>
+  <div class="ctl">
+    <label for="variant">POPS construction</label>
+    <select id="variant">
+      <option value="exact" selected>Exact constraint (rank-one)</option>
+      <option value="weighted">Eq. 6 approx. (10× weight)</option>
+    </select>
+  </div>
+  <div class="toggles">
+    <label><input id="showMembers" type="checkbox" checked> POPS member curves</label>
+    <label><input id="showOpt" type="checkbox" checked> Predicted-optimum markers</label>
+    <label><input id="showBands" type="checkbox" checked> Uncertainty bands</label>
+  </div>
+  <div class="status" id="status" aria-live="polite"></div>
+</aside>
+
+<div class="plots">
+  <figure>
+    <div class="head"><h3>Response and surrogate</h3><div class="legend" id="legMain"></div></div>
+    <svg class="plot" id="pMain" viewBox="0 0 860 330" role="img" aria-label="True response, observations and surrogate predictions"></svg>
+    <figcaption id="capMain"></figcaption>
+  </figure>
+  <figure>
+    <div class="head"><h3>Where is the optimum?</h3><div class="legend" id="legXs"></div></div>
+    <svg class="plot" id="pXs" viewBox="0 0 860 92" role="img" aria-label="Distribution of predicted optimum locations"></svg>
+    <figcaption id="capXs"></figcaption>
+  </figure>
+  <div class="row2">
+    <figure>
+      <div class="head"><h3>Acquisition</h3><div class="legend" id="legAcq"></div></div>
+      <svg class="plot" id="pAcq" viewBox="0 0 430 230" role="img" aria-label="Acquisition score versus x"></svg>
+      <figcaption id="capAcq"></figcaption>
+    </figure>
+    <figure>
+      <div class="head"><h3>Convergence, this seed</h3><div class="legend" id="legConv"></div></div>
+      <svg class="plot" id="pConv" viewBox="0 0 430 230" role="img" aria-label="Best observed response versus iteration"></svg>
+      <figcaption>Best measured noise-free response f<sub>true</sub> versus BO iteration. Grey lines: the other strategies on the same seed (same initial design and noise draws). Dashed: true optimum.</figcaption>
+    </figure>
+  </div>
+</div>
+</div>
+
+<section class="results" aria-labelledby="resH">
+  <h2 id="resH">Seed-averaged comparison</h2>
+  <p class="lede" id="resMeta"></p>
+  <div class="resbar">
+    <div class="ctl"><span class="lbl">Period</span><div class="seg" id="segP"></div></div>
+    <div class="ctl"><span class="lbl">Metric</span><div class="seg" id="segM"></div></div>
+    <div class="ctl"><span class="lbl">Live check</span><button id="rerun" type="button">Re-run 30 seeds for current sidebar settings</button></div>
+    <span class="progress" id="progress"></span>
+  </div>
+  <div class="legend" id="legRes"></div>
+  <div class="resgrid" id="resGrid"></div>
+  <div class="tablewrap"><table id="resTable"></table></div>
+  <div id="liveBox" hidden>
+    <figure><div class="head"><h3 id="liveTitle">Live re-run</h3></div><svg class="plot" id="pLive" viewBox="0 0 860 260" role="img" aria-label="Live re-run of seed-averaged regret"></svg></figure>
+  </div>
+</section>
+
+<section class="prose" aria-labelledby="findH">
+  <h2 id="findH">What the comparison shows</h2>
+  <div id="findings" class="prose">
+<h3>Short answer</h3>
+<p>In this toy, the structured model provides most of the benefit. POPS + PES adds robustness over the point estimate when the model is clearly misspecified. It does not beat a nonparametric GP that is given the same structural prior.</p>
+<h3>1 · A structured surrogate extrapolates where a stationary GP must explore</h3>
+<p>With 8 points in x ∈ [0, 0.5], the parametric model already places its optimum in the last period near x ≈ 1. At P = 0.2, δ = 0.12, POPS + PES has median best-measured regret 0.023 at iteration 3, against 0.139 for GP-RBF + EI. The RBF GP spends roughly 8–10 experiments finding the far peak; at P = 0.45 (spec) there are only ~2 periods, so it needs about 5. The parametric methods win in the scarce-data regime of Lee et al.</p>
+<h3>2 · POPS represents model-form error, and that error sets a floor</h3>
+<p>The POPS spread grows with δ and vanishes at δ = 0 (all members collapse onto the true parameters). The same misspecification also biases the location of every member's optimum. No measurement within the model class removes that bias, so all parametric strategies plateau: around 0.02 regret at δ = 0.12 and around 0.09–0.13 at δ = 0.3. The RBF GP passes them after about 10 iterations. The POPS spread in x* is a few grid cells, typically narrower than the bias, so it signals the inadequacy but does not bound it.</p>
+<h3>3 · PES targets disagreement about x*, not response variance</h3>
+<p>The acquisition panel overlays POPS predictive sd: PES maxima rarely coincide with the sd maxima. Early on, members often split between the peak near x ≈ 0.09 and the one near x ≈ 1, and PES measures where that split is decided. Against the greedy θ* ablation, this matters when δ is large. At δ = 0.3, P = 0.45, POPS + PES has median 0.091 versus 0.119 and mean 0.097 versus 0.153 at iteration 15, because greedy occasionally re-measures one wrong point forever. At δ ≤ 0.12 the two are tied. The response-variance control (POPS + UCB) does about as well as PES on this problem, so the gain comes from POPS uncertainty more than from the entropy criterion specifically.</p>
+<h3>Parametric prior versus POPS + PES</h3>
+<ul>
+<li><b>Gain from the inductive bias:</b> the parametric methods versus GP-RBF in the first 3–8 experiments. The periodic-kernel GP control, with P known, is best on every panel. It has the same structural prior without a fixed functional form, so it has no bias floor. In this toy the prior can be written as a kernel; for a kinetic network as in Lee et al. it generally cannot.</li>
+<li><b>Gain from POPS + PES:</b> the difference between POPS + PES and greedy θ*. That difference is zero at δ ≤ 0.12, positive at δ = 0.3, and mostly a reduction in bad-seed tail risk (mean, upper quartile) rather than in the median.</li>
+<li><b>Paper-literal PES</b> (grid-scale ε, no exploitation rule) keeps measuring wherever any residual x* disagreement remains. Its recommendation regret matches POPS + PES, but its best-measured regret is much worse. The default variant uses ε = 0.01² (the x* resolution we care about) and measures the predicted optimum once the expected gain falls below 0.05 nats. This generalises the paper's tie-break rule and is our modification.</li>
+<li><b>Limitation:</b> with initial data in [0, 0.35] (less than one period), the 8 POPS members can all extrapolate the wrong trend and agree on the wrong peak. In that case H[x*] ≈ 0 and PES has nothing to resolve. POPS only reflects misfit that the observed residuals reveal.</li>
+</ul>
+</div>
+</section>
+
+<footer>
+  <p>Everything runs in your browser: <span class="mono">pops_bo.js</span> holds the POPS fit, PES, GP and EI code that <span class="mono">validate.js</span> also uses in Node to produce the precomputed results. Source: <a href="https://github.com/tomswinburne/pops-bo/tree/main/examples/pops_bo_web">tomswinburne/pops-bo · examples/pops_bo_web</a>.</p>
+  <p>Lee, J., Augustine, L. J., Yang, P., and Perez, D. (2026). Efficient Bayesian Optimization of Separation Chemistry in the Scarce-Data Regime Using Kinetic Reaction Networks. ChemRxiv, preprint, July 13, 2026. <a href="https://doi.org/10.26434/chemrxiv.15004837/v2">https://doi.org/10.26434/chemrxiv.15004837/v2</a></p>
+</footer>
+</div>
+
+<script src="pops_bo.js"></script>
+<script src="results.js"></script>
+<script>
+(function () {
+'use strict';
+const B = window.PopsBO;
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const ITERS = 15, GRID = B.makeGrid(401);
+const COLORS = { 'pops-pes': '--pops', 'pops-pes-raw': '--pops', 'pops-ucb': '--ucb', 'greedy': '--greedy', 'gp-ei': '--gp', 'gpper-ei': '--gpper' };
+const SHORT = { 'pops-pes': 'POPS + PES', 'pops-pes-raw': 'POPS + PES (raw)', 'pops-ucb': 'POPS + UCB', 'greedy': 'Greedy θ*', 'gp-ei': 'GP-RBF + EI', 'gpper-ei': 'GP-periodic + EI' };
+const ORDER = ['pops-pes', 'pops-pes-raw', 'pops-ucb', 'greedy', 'gp-ei', 'gpper-ei'];
+
+// ------------------------------------------------------------ SVG helpers
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function plot(svg, o) {
+  svg.innerHTML = '';
+  const vb = svg.viewBox.baseVal, W = vb.width, H = vb.height;
+  const m = Object.assign({ l: 44, r: 12, t: 10, b: 26 }, o.margin || {});
+  const [x0, x1] = o.xlim, [y0, y1] = o.ylim;
+  const logy = !!o.logy;
+  const ty = v => logy ? Math.log10(Math.max(v, y0)) : v;
+  const X = v => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = v => m.t + (ty(y1) - ty(v)) / (ty(y1) - ty(y0)) * (H - m.t - m.b);
+  const g = el('g', {}, svg);
+  // grid + ticks
+  const xt = o.xticks || [0, .2, .4, .6, .8, 1];
+  for (const v of xt) {
+    el('line', { x1: X(v), x2: X(v), y1: m.t, y2: H - m.b, stroke: css('--grid'), 'stroke-width': 1 }, g);
+    if (!o.noXLabels) { const t = el('text', { x: X(v), y: H - m.b + 15, 'text-anchor': 'middle' }, g); t.textContent = o.xfmt ? o.xfmt(v) : +v.toFixed(2); }
+  }
+  const yt = o.yticks || niceTicks(y0, y1, 5);
+  for (const v of yt) {
+    el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: css('--grid'), 'stroke-width': 1 }, g);
+    const t = el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, g); t.textContent = o.yfmt ? o.yfmt(v) : +v.toFixed(2);
+  }
+  el('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'none', stroke: css('--rule') }, g);
+  if (o.xlabel) { const t = el('text', { x: (m.l + W - m.r) / 2, y: H - 1, 'text-anchor': 'middle' }, g); t.textContent = o.xlabel; }
+  if (o.ylabel) { const t = el('text', { x: 11, y: (m.t + H - m.b) / 2, 'text-anchor': 'middle', transform: `rotate(-90 11 ${(m.t + H - m.b) / 2})` }, g); t.textContent = o.ylabel; }
+  const clipId = 'c' + Math.random().toString(36).slice(2);
+  const cp = el('clipPath', { id: clipId }, svg); el('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b }, cp);
+  const body = el('g', { 'clip-path': `url(#${clipId})` }, svg);
+  const top = el('g', {}, svg);
+  const api = {
+    X, Y, W, H, m, body, top,
+    line(xs, ys, st) {
+      let d = '';
+      for (let i = 0; i < xs.length; i++) d += (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ',' + Y(ys[i]).toFixed(1);
+      return el('path', Object.assign({ d, fill: 'none', 'stroke-linejoin': 'round' }, st), st.top ? top : body);
+    },
+    band(xs, lo, hi, fill) {
+      let d = '';
+      for (let i = 0; i < xs.length; i++) d += (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ',' + Y(hi[i]).toFixed(1);
+      for (let i = xs.length - 1; i >= 0; i--) d += 'L' + X(xs[i]).toFixed(1) + ',' + Y(lo[i]).toFixed(1);
+      return el('path', { d: d + 'Z', fill, stroke: 'none' }, body);
+    },
+    vline(x, st) { return el('line', Object.assign({ x1: X(x), x2: X(x), y1: m.t, y2: H - m.b }, st), body); },
+    hline(y, st) { return el('line', Object.assign({ x1: m.l, x2: W - m.r, y1: Y(y), y2: Y(y) }, st), body); },
+    dot(x, y, r, st) { return el('circle', Object.assign({ cx: X(x), cy: Y(y), r }, st), st.top ? top : body); },
+    text(x, y, s, st) { const t = el('text', Object.assign({ x, y }, st || {}), top); t.textContent = s; return t; },
+  };
+  return api;
+}
+function niceTicks(a, b, n) {
+  const span = b - a, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => span / s <= n + .5);
+  const out = []; for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function legend(node, items) {
+  node.innerHTML = items.map(([label, color, kind]) => {
+    const style = kind === 'band' ? `background:${color}` : kind === 'dot' ? `background:${color}` : `color:${color}`;
+    return `<span><i class="sw ${kind || ''}" style="${style}"></i>${label}</span>`;
+  }).join('');
+}
+
+// ------------------------------------------------------------ state
+const cfgFromUI = () => ({
+  strategy: $('strategy').value,
+  delta: +$('delta').value,
+  period: +$('period').value,
+  noise: +$('noise').value,
+  region: $('region').value.split(',').map(Number),
+  seed: Math.max(1, Math.round(+$('seed').value || 1)),
+  popsVariant: $('variant').value,
+  iters: ITERS, grid: GRID,
+});
+let S = null, P = null, ghosts = {}, ghostTimer = null;
+
+function reset() {
+  const cfg = cfgFromUI();
+  S = B.startCampaign(cfg);
+  P = B.proposeNext(S);
+  computeGhosts(cfg);
+  draw();
+}
+function step() {
+  if (!S || S.t >= ITERS) return;
+  B.applyProposal(S, P);
+  P = B.proposeNext(S);
+  draw();
+}
+function runAll() {
+  const go = () => { if (S.t < ITERS) { step(); setTimeout(go, 60); } };
+  go();
+}
+function computeGhosts(cfg) {
+  clearTimeout(ghostTimer); ghosts = {};
+  const todo = ORDER.filter(s => s !== cfg.strategy && s !== 'pops-pes-raw');
+  const next = () => {
+    const s = todo.shift(); if (!s) return;
+    ghosts[s] = B.campaign({ ...cfg, strategy: s }).bestTrue;
+    B.setPeriod(cfg.period);
+    drawConv();
+    ghostTimer = setTimeout(next, 0);
+  };
+  ghostTimer = setTimeout(next, 30);
+}
+
+// ------------------------------------------------------------ drawing
+function draw() { drawMain(); drawXs(); drawAcq(); drawConv(); drawStatus(); }
+
+function yRange() {
+  const c = S.cfg; let lo = Infinity, hi = -Infinity;
+  for (const x of GRID) { const v = B.fTrue(x, c.delta); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  return [lo - 0.6, hi + 0.6];
+}
+
+function drawMain() {
+  const c = S.cfg, pops = !!P.st, showM = $('showMembers').checked, showO = $('showOpt').checked, showB = $('showBands').checked;
+  const p = plot($('pMain'), { xlim: [0, 1], ylim: yRange(), xlabel: 'experimental variable x', ylabel: 'response y', margin: { b: 32 } });
+  const truth = Array.from(GRID, x => B.fTrue(x, c.delta));
+  if (pops) {
+    if (showB) {
+      p.band(GRID, P.stats.lo, P.stats.hi, css('--pops-soft'));
+      p.band(GRID, P.stats.q25, P.stats.q75, css('--pops-soft2'));
+    }
+    if (showM) P.st.curves.forEach((cv, j) => p.line(GRID, cv, { stroke: css('--pops'), 'stroke-width': 1, 'stroke-opacity': 0.25 + 0.75 * Math.min(1, P.st.w0[j] * P.st.M) / 1.5 }));
+    p.line(GRID, P.thetaCurve, { stroke: css('--greedy'), 'stroke-width': 1.5, 'stroke-dasharray': '2 3' });
+    p.line(GRID, P.stats.mean, { stroke: css('--pops'), 'stroke-width': 2.2 });
+    if (showO && showM) P.st.xstar.forEach((xs, j) => p.dot(xs, P.st.curves[j][B.argmax(P.st.curves[j])], 3, { fill: css('--panel'), stroke: css('--pops'), 'stroke-width': 1.4 }));
+  } else {
+    const col = c.strategy === 'gp-ei' ? '--gp' : '--gpper';
+    if (showB) p.band(GRID, Array.from(P.pred.mean, (m, i) => m - 2 * P.pred.std[i]), Array.from(P.pred.mean, (m, i) => m + 2 * P.pred.std[i]), css('--gp-soft'));
+    p.line(GRID, P.pred.mean, { stroke: css(col), 'stroke-width': 2.2 });
+  }
+  p.line(GRID, truth, { stroke: css('--truth'), 'stroke-width': 1.6, 'stroke-dasharray': '6 4' });
+  if (showO) {
+    p.vline(S.opt.x, { stroke: css('--truth'), 'stroke-width': 1, 'stroke-dasharray': '1 3' });
+    const mx = P.xPredOpt, my = P.mean[P.predOpt];
+    el('path', { d: `M${p.X(mx)},${p.Y(my) - 12}l-6,-9h12z`, fill: css(COLORS[c.strategy] || '--pops') }, p.top);
+  }
+  // observations
+  S.xs.forEach((x, i) => {
+    const init = i < S.nInit;
+    p.dot(x, S.ys[i], init ? 3.6 : 4.2, { fill: init ? css('--obs') : css('--panel'), stroke: css('--obs'), 'stroke-width': 1.5, top: true });
+    if (!init) p.text(p.X(x) + 5, p.Y(S.ys[i]) - 6, String(i - S.nInit + 1), { 'font-size': 10 });
+  });
+  // next experiment
+  if (S.t < ITERS) {
+    p.vline(P.xNext, { stroke: css('--next'), 'stroke-width': 1.5 });
+    const right = P.xNext > 0.75;
+    p.text(p.X(P.xNext) + (right ? -4 : 4), p.m.t + 12, 'next x = ' + P.xNext.toFixed(3), { fill: css('--next'), 'font-weight': 600, 'text-anchor': right ? 'end' : 'start' });
+  }
+  const items = [['true f', css('--truth'), 'dash'], ['initial / BO data', css('--obs'), 'dot']];
+  if (pops) items.push(['POPS mean', css('--pops')], ['POPS members', css('--pops')], ['min–max / IQR', css('--pops-soft2'), 'band'], ['θ* fit', css('--greedy'), 'dash']);
+  else items.push(['GP mean', css(c.strategy === 'gp-ei' ? '--gp' : '--gpper')], ['±2σ', css('--gp-soft'), 'band']);
+  items.push(['next experiment', css('--next')]);
+  legend($('legMain'), items);
+  $('capMain').textContent = pops
+    ? `Each orange curve is one POPS member θ_i: the ridge fit constrained to pass exactly through observation i (${c.popsVariant === 'exact' ? 'exact rank-one solution' : 'Eq. 6 approximation, 10× weight on point i'}). The spread between members is the model-form uncertainty implied by the residuals. Open circles mark each member's own maximum x*_i; the triangle marks the ensemble-mean optimum; the dotted vertical line is the true optimum.`
+    : `GP posterior mean and ±2σ (latent function). Hyperparameters maximise the log marginal likelihood (grid search), with the noise variance bounded below by the known σ². Triangle: GP-mean optimum. Dotted vertical: true optimum.`;
+}
+
+function drawXs() {
+  const c = S.cfg;
+  const p = plot($('pXs'), { xlim: [0, 1], ylim: [0, 1], yticks: [], noXLabels: false, margin: { t: 6, b: 22 } });
+  p.vline(S.opt.x, { stroke: css('--truth'), 'stroke-width': 1, 'stroke-dasharray': '1 3' });
+  if (P.st) {
+    // weighted histogram of member optima (bins 0.01)
+    const nb = 100, h = new Float64Array(nb);
+    P.st.xstar.forEach((x, j) => { h[Math.min(nb - 1, Math.floor(x * nb))] += P.st.w0[j]; });
+    const hmax = Math.max(...h);
+    for (let b = 0; b < nb; b++) if (h[b] > 0) {
+      const x0 = p.X(b / nb), x1 = p.X((b + 1) / nb), y = p.Y(0.92 * h[b] / hmax);
+      el('rect', { x: x0, y, width: Math.max(1.5, x1 - x0 - 0.5), height: p.Y(0) - y, fill: css('--pops') }, p.body);
+    }
+    // entropy proxy std of x*
+    let m = 0, v = 0; P.st.xstar.forEach((x, j) => m += P.st.w0[j] * x); P.st.xstar.forEach((x, j) => v += P.st.w0[j] * (x - m) ** 2);
+    const sd = Math.sqrt(v);
+    const ylab = p.m.t + 12;
+    p.text(p.W - p.m.r - 4, ylab, `weighted sd(x*) = ${sd.toFixed(3)}   H[x*] ≈ ${(0.5 * Math.log(2 * Math.PI * Math.E * (v + 1e-4))).toFixed(2)} nats`, { 'text-anchor': 'end', fill: css('--fg') });
+    legend($('legXs'), [['members\' x*_i, weighted by likelihood', css('--pops'), 'band'], ['true x*', css('--truth'), 'dash']]);
+    $('capXs').textContent = 'Uncertainty in the location of the optimum, which is what PES reduces. Compare with the response bands above: members can disagree strongly about y where they agree on x*, and the reverse.';
+  } else {
+    p.text(p.X(0.5), p.Y(0.5) + 4, 'The GP + EI baseline has no explicit distribution over x*.', { 'text-anchor': 'middle' });
+    p.dot(P.xPredOpt, 0.25, 4, { fill: css(COLORS[c.strategy]) });
+    legend($('legXs'), [['GP-mean optimum', css(COLORS[c.strategy]), 'dot'], ['true x*', css('--truth'), 'dash']]);
+    $('capXs').textContent = 'Switch to a POPS strategy to see the ensemble distribution of predicted optima.';
+  }
+}
+
+function drawAcq() {
+  const c = S.cfg, a = Array.from(P.acq);
+  let lo = Math.min(...a), hi = Math.max(...a); if (hi - lo < 1e-12) { hi = lo + 1; }
+  const pad = 0.08 * (hi - lo);
+  const p = plot($('pAcq'), { xlim: [0, 1], ylim: [lo - pad, hi + pad], xlabel: 'x', margin: { l: 48, b: 32 }, yfmt: v => Math.abs(v) < 1e-3 && v !== 0 ? v.toExponential(0) : +v.toPrecision(3) });
+  const col = css(COLORS[c.strategy] || '--pops');
+  const items = [[P.acqLabel, col]];
+  if (P.pes) {
+    // overlay POPS predictive sd rescaled to the acquisition axis, to show PES != max variance
+    const sd = Array.from(P.stats.sd), smax = Math.max(...sd) || 1;
+    p.line(GRID, sd.map(s => lo + (hi - lo) * s / smax), { stroke: css('--muted'), 'stroke-width': 1.2, 'stroke-dasharray': '4 3' });
+    const ig = B.argmax(sd);
+    p.dot(GRID[ig], hi, 3.5, { fill: css('--muted') });
+    items.push(['POPS predictive sd (rescaled)', css('--muted'), 'dash']);
+  }
+  p.line(GRID, a, { stroke: col, 'stroke-width': 2 });
+  if (S.t < ITERS) { p.vline(P.xNext, { stroke: css('--next'), 'stroke-width': 1.5 }); p.dot(P.xNext, a[P.next], 4.5, { fill: css('--next'), top: true }); }
+  legend($('legAcq'), items);
+  let cap = '';
+  if (P.pes) cap = `Expected reduction in the Gaussian-approximated entropy of x* (Eqs. 7–12): each candidate x is scored by reweighting the ensemble for every hypothetical outcome y_j = f_θj(x), without refitting. ` + (P.tieBreak ? 'All members agree on x* to within the ε resolution, so the information gain is below threshold and the highest predicted mean is measured instead.' : 'The peak of this curve is generally not where the predictive sd (grey) peaks.');
+  else if (c.strategy === 'greedy') cap = 'Greedy measures the maximum of the single least-squares fit θ*. It uses no uncertainty, so it can keep re-measuring the same point.';
+  else if (c.strategy === 'pops-ucb') cap = 'Control: optimism on predicted response, POPS mean + 2·sd. Uses the same ensemble as PES, but targets response variance rather than x* entropy.';
+  else cap = 'Expected improvement over the best posterior mean at the measured points (noisy-EI plug-in), ξ = 0.01·std(y).';
+  $('capAcq').textContent = cap;
+}
+
+function drawConv() {
+  if (!S) return;
+  const c = S.cfg;
+  let lo = Infinity; const all = [S.bestTrue, ...Object.values(ghosts)];
+  for (const r of all) for (const v of r) lo = Math.min(lo, v);
+  lo = Math.min(lo, S.opt.f - 0.1);
+  const hi = S.opt.f + 0.05 * (S.opt.f - lo);
+  const p = plot($('pConv'), { xlim: [0, ITERS], ylim: [lo, hi], xticks: [0, 3, 6, 9, 12, 15], xlabel: 'BO iteration', margin: { l: 44, b: 32 } });
+  p.hline(S.opt.f, { stroke: css('--truth'), 'stroke-dasharray': '5 4', 'stroke-width': 1 });
+  for (const s of ORDER) if (ghosts[s]) {
+    const r = ghosts[s];
+    p.line(r.map((_, i) => i), r, { stroke: css(COLORS[s]), 'stroke-width': 1.2, 'stroke-opacity': 0.45 });
+  }
+  const it = S.bestTrue.map((_, i) => i);
+  p.line(it, S.bestTrue, { stroke: css(COLORS[c.strategy]), 'stroke-width': 2.5, top: true });
+  it.forEach(i => p.dot(i, S.bestTrue[i], 2.8, { fill: css(COLORS[c.strategy]), top: true }));
+  legend($('legConv'), ORDER.filter(s => s === c.strategy || ghosts[s]).map(s => [SHORT[s], css(COLORS[s])]));
+}
+
+function drawStatus() {
+  const c = S.cfg, f = v => v.toFixed(3);
+  const lines = [
+    `iteration <b>${S.t}</b> / ${ITERS}`,
+    `true optimum x* = <b>${f(S.opt.x)}</b>, f* = ${f(S.opt.f)}`,
+    `best measured regret <b>${f(S.regret[S.t])}</b>`,
+    `recommendation x̂ = ${f(P.xPredOpt)}, regret ${f(S.opt.f - B.fTrue(P.xPredOpt, c.delta))}`,
+  ];
+  if (P.pops) lines.push(`POPS: ${P.st.M} members, σ_lik = ${Math.sqrt(P.pops.sigma2).toFixed(3)}`);
+  if (P.gp) lines.push(`GP: ℓ = ${P.gp.l.toFixed(3)}, noise/s² = ${P.gp.g.toExponential(1)}`);
+  $('status').innerHTML = lines.map(l => `<span>${l}</span>`).join('');
+  $('step').disabled = S.t >= ITERS; $('run').disabled = S.t >= ITERS;
+}
+
+// ------------------------------------------------------------ results
+const R = window.POPS_RESULTS;
+let resP = null, resMetric = 'best';
+function segment(node, opts, get, set) {
+  node.innerHTML = '';
+  for (const [val, label] of opts) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    b.setAttribute('aria-pressed', String(get() === val));
+    b.onclick = () => { set(val); [...node.children].forEach(ch => ch.setAttribute('aria-pressed', String(ch === b))); drawResults(); };
+    node.appendChild(b);
+  }
+}
+function regretPlot(svg, series, title, iters) {
+  const floor = 1e-3;
+  const p = plot(svg, { xlim: [0, iters], ylim: [floor, 1], logy: true, yticks: [1e-3, 1e-2, 1e-1, 1], yfmt: v => v >= 1 ? '1' : v.toExponential(0).replace('e-', 'e−'), xticks: [0, 5, 10, 15].filter(v => v <= iters), xlabel: 'BO iteration', margin: { l: 44, b: 32, t: 22 } });
+  p.text(p.m.l, 14, title, { fill: css('--fg'), 'font-weight': 600, 'font-size': 12 });
+  const it = Array.from({ length: iters + 1 }, (_, i) => i);
+  for (const [s, d] of series) {
+    if (s === 'pops-pes' || s === 'gp-ei' || s === 'gpper-ei') {
+      const path = p.band(it, d.q25.map(v => Math.max(v, floor)), d.q75.map(v => Math.max(v, floor)), css(COLORS[s]));
+      path.setAttribute('fill-opacity', '0.13');
+    }
+  }
+  for (const [s, d] of series) p.line(it, d.median.map(v => Math.max(v, floor)), { stroke: css(COLORS[s]), 'stroke-width': s === 'pops-pes' ? 2.6 : 1.6, 'stroke-dasharray': s === 'pops-pes-raw' ? '3 3' : (s === 'greedy' ? '6 3' : 'none') });
+}
+function drawResults() {
+  if (!R) { $('resMeta').textContent = 'results.js not found: run `node validate.js` to generate it.'; return; }
+  const m = R.meta;
+  $('resMeta').innerHTML = `${m.nSeeds} seeded campaigns per panel, ${m.iters} iterations, 8 initial points in x ∈ [${m.region.join(', ')}], noise σ = ${m.noise}, ${m.gridN}-point candidate grid. Lines: median regret (log scale, floored at 10⁻³); bands: interquartile range for POPS + PES and both GPs. Every strategy sees the same initial design and noise draws per seed.`;
+  const keys = Object.keys(R.runs), periods = [...new Set(keys.map(k => R.runs[k].P))];
+  if (resP == null) resP = periods[0];
+  segment($('segP'), periods.map(p => [p, `P = ${p}`]), () => resP, v => resP = v);
+  segment($('segM'), [['best', 'Best measured'], ['rec', 'Recommendation']], () => resMetric, v => resMetric = v);
+  const grid = $('resGrid'); grid.innerHTML = '';
+  const runs = keys.map(k => R.runs[k]).filter(r => r.P === resP);
+  const strategies = ORDER.filter(s => runs[0].strategies[s]);
+  legend($('legRes'), strategies.map(s => [SHORT[s], css(COLORS[s]), s === 'pops-pes-raw' || s === 'greedy' ? 'dash' : '']));
+  for (const run of runs) {
+    const fig = document.createElement('figure');
+    const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 400 250'); svg.setAttribute('class', 'plot');
+    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Median regret, delta ${run.delta}`);
+    fig.appendChild(svg); grid.appendChild(fig);
+    const label = run.delta === 0 ? 'δ = 0 (correctly specified)' : `δ = ${run.delta}`;
+    regretPlot(svg, strategies.map(s => [s, run.strategies[s][resMetric]]), label, m.iters);
+  }
+  // table: median at 3, 5, 15 and mean at 15
+  const T = [3, 5, m.iters];
+  let html = `<thead><tr><th>${resMetric === 'best' ? 'Best-measured' : 'Recommendation'} regret, P = ${resP}</th>${runs.map(r => `<th colspan="4">δ = ${r.delta}: median @${T.join(', @')} · mean @${m.iters}</th>`).join('')}</tr></thead><tbody>`;
+  for (const s of strategies) {
+    html += `<tr><td>${SHORT[s]}</td>`;
+    for (const r of runs) {
+      const d = r.strategies[s][resMetric];
+      const vals = [...T.map(t => d.median[t]), d.mean[m.iters]];
+      vals.forEach((v, i) => {
+        const col = i < 3 ? strategies.map(q => r.strategies[q][resMetric].median[T[i]]) : strategies.map(q => r.strategies[q][resMetric].mean[m.iters]);
+        const win = v <= Math.min(...col) + 1e-9;
+        html += `<td class="${win ? 'win' : ''}">${v.toFixed(3)}</td>`;
+      });
+    }
+    html += '</tr>';
+  }
+  $('resTable').innerHTML = html + '</tbody>';
+}
+
+let liveBusy = false;
+function liveRerun() {
+  if (liveBusy) return; liveBusy = true;
+  const base = cfgFromUI(), N = 30, strategies = ['pops-pes', 'pops-ucb', 'greedy', 'gp-ei', 'gpper-ei'];
+  const jobs = []; for (const s of strategies) for (let seed = 1; seed <= N; seed++) jobs.push([s, seed]);
+  const out = {}; strategies.forEach(s => out[s] = []);
+  const total = jobs.length; $('rerun').disabled = true;
+  const tick = () => {
+    const t0 = performance.now();
+    while (jobs.length && performance.now() - t0 < 40) {
+      const [s, seed] = jobs.shift();
+      out[s].push(B.campaign({ ...base, strategy: s, seed }).regret);
+    }
+    $('progress').textContent = `running ${total - jobs.length} / ${total} campaigns…`;
+    if (jobs.length) return setTimeout(tick, 0);
+    B.setPeriod(base.period);
+    const series = strategies.map(s => {
+      const rs = out[s], q = p => Array.from({ length: ITERS + 1 }, (_, t) => B.quantile(rs.map(r => r[t]), p));
+      return [s, { median: q(.5), q25: q(.25), q75: q(.75) }];
+    });
+    $('liveBox').hidden = false;
+    $('liveTitle').textContent = `Live re-run: ${N} seeds, P = ${base.period}, δ = ${base.delta}, σ = ${base.noise}, initial x ∈ [${base.region.join(', ')}], best-measured regret`;
+    regretPlot($('pLive'), series, '', ITERS);
+    $('progress').textContent = `done: ${total} campaigns`;
+    $('rerun').disabled = false; liveBusy = false;
+  };
+  tick();
+}
+
+
+// ------------------------------------------------------------ wire up
+const sel = $('strategy');
+for (const s of ORDER) { const o = document.createElement('option'); o.value = s; o.textContent = B.STRATEGIES[s]; sel.appendChild(o); }
+sel.value = 'pops-pes';
+$('delta').addEventListener('input', () => { $('deltaOut').textContent = (+$('delta').value).toFixed(2); });
+['strategy', 'delta', 'period', 'noise', 'region', 'seed', 'variant'].forEach(id => $(id).addEventListener('change', reset));
+['showMembers', 'showOpt', 'showBands'].forEach(id => $(id).addEventListener('change', draw));
+$('step').onclick = step; $('run').onclick = runAll; $('reset').onclick = reset; $('rerun').onclick = liveRerun;
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { draw(); drawResults(); });
+new MutationObserver(() => { draw(); drawResults(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+reset();
+drawResults();
+})();
+</script>
+</body>
+</html>
