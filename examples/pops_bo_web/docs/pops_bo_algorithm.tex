@@ -161,6 +161,7 @@ Cost per step is $O(GM^2)$ for PES, with $G=401$ and $M=64$, plus $O(N^3)$ grid 
 \section{Baselines and controls}
 \begin{itemize}[itemsep=1pt]
 \item \textbf{Greedy $\btheta_*$}: $\arg\max$ of the conditioned $\btheta_*$ prediction; the no-uncertainty ablation.
+\item \textbf{POPS + EI}: $\alpha_{\rm EI}$ (Eq.~14) from the first step. It is value-seeking with no $x^*$ entropy, and isolates what the entropy criterion adds on the same conditioned ensemble.
 \item \textbf{POPS + UCB}: ensemble mean $+2\times$ ensemble sd; this uses response variance, not $x^*$ entropy.
 \item \textbf{GP-RBF + EI}: stationary GP, with hyperparameters by marginal likelihood and noise $\ge\sigma_n^2/2$; noisy EI.
 \item \textbf{GP-periodic + EI}: periodic kernel with known $P$ plus a linear term. It has the same structural prior without a fixed form.

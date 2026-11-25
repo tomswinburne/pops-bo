@@ -21,6 +21,7 @@
   --pops-soft: rgba(196, 80, 26, .14);
   --pops-soft2: rgba(196, 80, 26, .26);
   --ucb: #9a6b00;
+  --popsei: #b03a7a;
   --greedy: #6b4fa0;
   --gp: #2d63a8;
   --gp-soft: rgba(45, 99, 168, .15);
@@ -37,7 +38,7 @@
   :root:not([data-theme="light"]) {
     --bg: #131816; --panel: #1a201e; --fg: #e4e9e6; --muted: #98a39e; --rule: #2e3633; --grid: #232a27;
     --truth: #e4e9e6; --pops: #f08a52; --pops-soft: rgba(240, 138, 82, .16); --pops-soft2: rgba(240, 138, 82, .3);
-    --ucb: #d9a634; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
+    --ucb: #d9a634; --popsei: #e48ab8; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
     --obs: #e4e9e6; --next: #f08a52; --good: #6cc48a; color-scheme: dark;
     --k1: #e0bf4a; --k2: #5fc296; --k3: #6f9fe0; --k4: #b48ad6; --k5: #e07a9f; --k6: #aab2b8;
   }
@@ -45,7 +46,7 @@
 :root[data-theme="dark"] {
   --bg: #131816; --panel: #1a201e; --fg: #e4e9e6; --muted: #98a39e; --rule: #2e3633; --grid: #232a27;
   --truth: #e4e9e6; --pops: #f08a52; --pops-soft: rgba(240, 138, 82, .16); --pops-soft2: rgba(240, 138, 82, .3);
-  --ucb: #d9a634; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
+  --ucb: #d9a634; --popsei: #e48ab8; --greedy: #a88ee0; --gp: #6fa3e6; --gp-soft: rgba(111, 163, 230, .18); --gpper: #4cc2ad;
   --obs: #e4e9e6; --next: #f08a52; --good: #6cc48a; color-scheme: dark;
     --k1: #e0bf4a; --k2: #5fc296; --k3: #6f9fe0; --k4: #b48ad6; --k5: #e07a9f; --k6: #aab2b8;
 }
@@ -311,9 +312,9 @@ const B = window.PopsBO;
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const ITERS = 15, GRID = B.makeGrid(401);
-const COLORS = { 'pops-pes': '--pops', 'pops-pes-raw': '--pops', 'pops-ucb': '--ucb', 'greedy': '--greedy', 'gp-ei': '--gp', 'gpper-ei': '--gpper' };
-const SHORT = { 'pops-pes': 'POPS + PES', 'pops-pes-raw': 'POPS + PES (raw)', 'pops-ucb': 'POPS + UCB', 'greedy': 'Greedy θ*', 'gp-ei': 'GP-RBF + EI', 'gpper-ei': 'GP-periodic + EI' };
-const ORDER = ['pops-pes', 'pops-pes-raw', 'pops-ucb', 'greedy', 'gp-ei', 'gpper-ei'];
+const COLORS = { 'pops-pes': '--pops', 'pops-pes-raw': '--pops', 'pops-ei': '--popsei', 'pops-ucb': '--ucb', 'greedy': '--greedy', 'gp-ei': '--gp', 'gpper-ei': '--gpper' };
+const SHORT = { 'pops-pes': 'POPS + PES', 'pops-pes-raw': 'POPS + PES (raw)', 'pops-ei': 'POPS + EI', 'pops-ucb': 'POPS + UCB', 'greedy': 'Greedy θ*', 'gp-ei': 'GP-RBF + EI', 'gpper-ei': 'GP-periodic + EI' };
+const ORDER = ['pops-pes', 'pops-pes-raw', 'pops-ei', 'pops-ucb', 'greedy', 'gp-ei', 'gpper-ei'];
 
 // ------------------------------------------------------------ SVG helpers
 const NS = 'http://www.w3.org/2000/svg';
@@ -547,6 +548,7 @@ function drawAcq() {
   let cap = '';
   if (P.pes) cap = `Expected reduction in the Gaussian-approximated entropy of x* (Eqs. 7–12): each candidate x is scored by reweighting the ensemble for every hypothetical outcome y_j = f_θj(x), without refitting. ` + (P.tieBreak ? (exploitView ? 'All members agree on x* to within the ε resolution, so PES has nothing left to resolve. Shown instead: the expected improvement of the best measured value, averaged over members. It is exactly zero at every measured point, so replicates are never chosen.' : 'All members agree on x* to within the ε resolution; the highest predicted mean is measured.') : 'The peak of this curve is generally not where the predictive sd (grey) peaks.') + (P.st && P.st.disc ? ` Outcomes are conditioned on nearby data through a discrepancy GP (ℓ = ${P.st.disc.l.toFixed(3)}, τ = ${Math.sqrt(P.st.disc.tau2).toFixed(3)}), so candidates next to measurements carry little information.` : '');
   else if (c.strategy === 'greedy') cap = 'Greedy measures the maximum of the single least-squares fit θ*. It uses no uncertainty; with r = 0 it re-measures the same point indefinitely.';
+  else if (c.strategy === 'pops-ei') cap = 'POPS + EI: expected improvement of the best measured value, averaged over ensemble members (per-member incumbent; widths from the discrepancy GP). Value-seeking, with no x* entropy. Exactly zero at measured points, so it never replicates.';
   else if (c.strategy === 'pops-ucb') cap = 'Control: optimism on predicted response, POPS mean + 2·sd. Uses the same ensemble as PES, but targets response variance rather than x* entropy.';
   else cap = 'Expected improvement over the best posterior mean at the measured points (noisy-EI plug-in), ξ = 0.01·std(y).';
   if (P.minSpacing > 0) cap += ` Shaded: candidates within r = ${P.minSpacing} of a previous experiment, which are not eligible (anti-locality; set r = 0 to switch it off).`;
@@ -621,10 +623,11 @@ function seriesFor(run, view, metric) {
   }
   return Object.entries(run.series).map(([id, d]) => {
     const K = id.includes('K=') ? id.split('K=')[1] : null;
-    const isAuto = K === 'auto', greedy = id.startsWith('greedy');
-    return { id, label: greedy ? 'Greedy, K by evidence' : id === 'gp-ei' ? 'GP-RBF + EI' : isAuto ? 'POPS + PES, K by evidence' : `POPS + PES, K = ${K}`,
-      color: greedy ? css('--greedy') : id === 'gp-ei' ? css('--gp') : KCOL(isAuto ? 'auto' : +K), data: d[metric],
-      width: isAuto && !greedy ? 2.8 : 1.6, dash: greedy ? '6 3' : '', band: (isAuto && !greedy) || id === 'gp-ei' };
+    const isAuto = K === 'auto', greedy = id.startsWith('greedy'), pei = id.startsWith('pops-ei');
+    const pes = isAuto && !greedy && !pei;
+    return { id, label: greedy ? 'Greedy, K by evidence' : pei ? 'POPS + EI, K by evidence' : id === 'gp-ei' ? 'GP-RBF + EI' : isAuto ? 'POPS + PES, K by evidence' : `POPS + PES, K = ${K}`,
+      color: greedy ? css('--greedy') : pei ? css('--popsei') : id === 'gp-ei' ? css('--gp') : KCOL(isAuto ? 'auto' : +K), data: d[metric],
+      width: pes ? 2.8 : 1.6, dash: greedy ? '6 3' : '', band: pes || id === 'gp-ei' };
   });
 }
 let resView = 'strategies';
@@ -713,7 +716,7 @@ function drawK() {
 let liveBusy = false;
 function liveRerun() {
   if (liveBusy) return; liveBusy = true;
-  const base = cfgFromUI(), N = 30, strategies = ['pops-pes', 'pops-ucb', 'greedy', 'gp-ei', 'gpper-ei'];
+  const base = cfgFromUI(), N = 30, strategies = ['pops-pes', 'pops-ei', 'pops-ucb', 'greedy', 'gp-ei', 'gpper-ei'];
   const jobs = []; for (const s of strategies) for (let seed = 1; seed <= N; seed++) jobs.push([s, seed]);
   const out = {}; strategies.forEach(s => out[s] = []);
   const total = jobs.length; $('rerun').disabled = true;

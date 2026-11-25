@@ -498,11 +498,43 @@
   const STRATEGIES = {
     'pops-pes': 'POPS + PES',
     'pops-pes-raw': 'POPS + PES (raw: grid-scale ε, no exploit threshold)',
+    'pops-ei': 'POPS + EI (value-seeking control)',
     'pops-ucb': 'POPS + UCB (response-variance control)',
     'greedy': 'Parametric point estimate (greedy)',
     'gp-ei': 'GP (RBF) + EI',
     'gpper-ei': 'GP (periodic+linear, known P) + EI',
   };
+
+  /*
+   * POPS expected improvement of the best MEASURED value (used by 'pops-ei' at every step and by
+   * 'pops-pes' once x* is resolved), averaged over the ensemble hypotheses. Under member j the gain from measuring x is
+   *   max(f_j(x) - max_n f_j(x_n), 0),
+   * which is exactly zero at any measured location, so replicates have no value. With the
+   * discrepancy model, f_j(x) ~ N(mu_j(x), s2_lat(x)) and the expectation is the EI formula.
+   * Under the discrepancy model f_j(x) - f_j(x_inc) is Gaussian with mean mu_j(x) - mu_j(x_inc)
+   * and variance Var[d(x) - d(x_inc)], which vanishes as x -> x_inc (they are correlated).
+   */
+  function popsLocationEI(st, xs, grid) {
+    const near = xs.map(x => Math.round(x * (grid.length - 1)));
+    const ei = new Float64Array(grid.length), sdCache = new Map();
+    const sdDiff = gi => {
+      if (!st.discCov) return null;
+      if (!sdCache.has(gi)) sdCache.set(gi, Float64Array.from(grid, (_, g) => Math.sqrt(Math.max(st.s2lat[g] + st.s2lat[gi] - 2 * st.discCov(g, gi), 0))));
+      return sdCache.get(gi);
+    };
+    for (let j = 0; j < st.M; j++) {
+      const c = st.curves[j]; let gi = near[0];
+      for (const g of near) if (c[g] > c[gi]) gi = g;
+      const sdv = sdDiff(gi);
+      for (let g = 0; g < grid.length; g++) {
+        const d = c[g] - c[gi], sd = sdv ? sdv[g] : 0;
+        ei[g] += st.w0[j] * (sd > 1e-9 ? d * normCdf(d / sd) + sd * normPdf(d / sd) : Math.max(d, 0));
+      }
+    }
+    // Exact identity: f(x_m) <= max_n f(x_n) for any measured x_m, so its improvement is zero.
+    for (const g of near) ei[g] = 0;
+    return ei;
+  }
 
   /*
    * One acquisition decision. Returns everything the UI needs to draw.
@@ -541,6 +573,17 @@
         out.acq = thetaCurve; out.acqLabel = 'f_θ*(x) (maximise)';
         out.next = pick(thetaCurve);
         out.predOpt = argmax(thetaCurve);
+      } else if (s === 'pops-ei') {
+        // EI on the POPS ensemble from the first step: value-seeking, no x* entropy.
+        const ei = popsLocationEI(st, xs, grid);
+        out.acq = ei; out.acqLabel = 'E[improvement of best measured value] (maximise)';
+        out.predOpt = argmax(stats.mean);
+        out.next = pick(ei);
+        if (!(ei[out.next] > 1e-9)) { // no member expects improvement: best unmeasured mean
+          const masked = Float64Array.from(stats.mean);
+          for (const x of xs) masked[Math.round(x * (grid.length - 1))] = -Infinity;
+          out.next = pick(masked); out.exploitFallback = true;
+        }
       } else if (s === 'pops-ucb') {
         const beta = cfg.ucbBeta != null ? cfg.ucbBeta : 2;
         out.acq = Float64Array.from(stats.mean, (m, g) => m + beta * stats.sd[g]);
@@ -563,31 +606,7 @@
           out.tieBreak = true;
           if (cfg.exploit === 'mean') out.next = pick(stats.mean);
           else {
-            // Converged on x*: expected improvement in the best MEASURED value, averaged over the
-            // ensemble hypotheses. Under member j the gain from measuring x is
-            //   max(f_j(x) - max_n f_j(x_n), 0),
-            // which is exactly zero at any measured location, so replicates have no value. With the
-            // discrepancy model, f_j(x) ~ N(mu_j(x), s2_lat(x)) and the expectation is the EI formula.
-            // Under the discrepancy model f_j(x) - f_j(x_inc) is Gaussian with mean mu_j(x) - mu_j(x_inc)
-            // and variance Var[d(x) - d(x_inc)], which vanishes as x -> x_inc (they are correlated).
-            const near = xs.map(x => Math.round(x * (grid.length - 1)));
-            const ei = new Float64Array(grid.length), sdCache = new Map();
-            const sdDiff = gi => {
-              if (!st.discCov) return null;
-              if (!sdCache.has(gi)) sdCache.set(gi, Float64Array.from(grid, (_, g) => Math.sqrt(Math.max(st.s2lat[g] + st.s2lat[gi] - 2 * st.discCov(g, gi), 0))));
-              return sdCache.get(gi);
-            };
-            for (let j = 0; j < st.M; j++) {
-              const c = st.curves[j]; let gi = near[0];
-              for (const g of near) if (c[g] > c[gi]) gi = g;
-              const sdv = sdDiff(gi);
-              for (let g = 0; g < grid.length; g++) {
-                const d = c[g] - c[gi], sd = sdv ? sdv[g] : 0;
-                ei[g] += st.w0[j] * (sd > 1e-9 ? d * normCdf(d / sd) + sd * normPdf(d / sd) : Math.max(d, 0));
-              }
-            }
-            // Exact identity: f(x_m) <= max_n f(x_n) for any measured x_m, so its improvement is zero.
-            for (const g of near) ei[g] = 0;
+            const ei = popsLocationEI(st, xs, grid);
             out.exploitAcq = ei;
             out.next = pick(ei);
             // nothing to gain anywhere: fall back to the most informative candidate

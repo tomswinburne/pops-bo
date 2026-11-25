@@ -6,7 +6,7 @@ const f3 = v => v.toFixed(3);
 const esc = s => s.replace(/&/g, '\\&').replace(/θ\*/g, '$\\theta_*$').replace(/≥/g, '$\\ge$');
 const names = {
   'pops-pes': 'POPS + PES (conditioned)', 'pops-pes-raw': 'POPS + PES, paper-literal',
-  'pops-ucb': 'POPS + UCB', 'greedy': 'Greedy $\\theta_*$', 'gp-ei': 'GP-RBF + EI', 'gpper-ei': 'GP-periodic + EI',
+  'pops-ei': 'POPS + EI', 'pops-ucb': 'POPS + UCB', 'greedy': 'Greedy $\\theta_*$', 'gp-ei': 'GP-RBF + EI', 'gpper-ei': 'GP-periodic + EI',
 };
 const m = R.meta, T = m.iters, out = [];
 out.push(`\\noindent Settings: $\\rho=${m.rho}$, $\\sigma_n=${m.noise}$, ${m.nSeeds} seeds, initial region $[${m.region.join(',')}]$, ` +
