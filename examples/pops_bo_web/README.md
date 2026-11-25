@@ -17,8 +17,15 @@ parametric greedy ablation on a periodic 1-D toy problem.
 xdg-open index.html            # or: open index.html / double-click
 
 # regenerate the seeded comparison (writes results.json, results.js, results.md)
-node validate.js               # 40 seeds, 15 iterations, ~5 min
+node validate.js               # 40 seeds, 15 iterations, ~45 min serial
 node validate.js --seeds 10 --periods 0.45 --deltas 0.12   # quick
+
+# parallel: one shard per (P, delta), then merge
+node validate.js --periods 0.45 --deltas 0.3 --variant 0 --part /tmp/p1.json   # ... one per config
+node merge_results.js /tmp/p1.json /tmp/p2.json ...
+
+# algorithm notes (tables generated from results.json)
+cd docs && node make_tables.js && pdflatex pops_bo_algorithm.tex && pdflatex pops_bo_algorithm.tex
 ```
 
 | file | contents |
@@ -26,6 +33,8 @@ node validate.js --seeds 10 --periods 0.45 --deltas 0.12   # quick
 | `pops_bo.js` | POPS fit, PES, GP + EI, greedy, campaign driver (UMD: browser and Node) |
 | `index.html` | single-page UI: main, x\*-distribution, acquisition and convergence plots, seed-averaged results |
 | `validate.js` | seeded validation → `results.json` / `results.js` (loaded by the page) / `results.md` |
+| `merge_results.js` | merges sharded `validate.js --part` outputs |
+| `docs/pops_bo_algorithm.{tex,pdf}` | algorithm notes: every equation implemented, plus generated results tables |
 
 ## Problem
 
@@ -47,7 +56,7 @@ K = 1 is the spec surrogate. K is set by a slider (1–6), or chosen at every st
 
 ## Method (mapping to Lee et al.)
 
-**POPS ensemble (Eq. 6).** The ridge loss is $L(\theta)=\sum_n(\phi_n\cdot\theta-y_n)^2+\lambda|\theta|^2$ with λ = 10⁻⁴. Each observation i gets one member,
+**POPS ensemble (Eq. 6).** The ridge loss is $L(\theta)=\sum_n(\phi_n\cdot\theta-y_n)^2+\lambda|\theta|^2$ with λ = σ_n²/τ² (prior θ ~ N(0, τ²I), τ = 1). Each observation i gets one member,
 $\theta_i=\arg\min L$ subject to $\phi_i\cdot\theta=y_i$. Two variants:
 
 - **Default, exact.** The analytic rank-one correction
@@ -77,71 +86,78 @@ This was checked against the direct $\mathcal N(0,\sigma_n^2 I+\tau^2\Phi\Phi^\t
 
 During acquisition only the weights change. POPS is refitted after each real measurement.
 
+**Conditioning outcomes on nearby data (default; our extension).** As written, approximate PES draws hypothetical outcomes from the members, with no reference to what was already measured near x. We add a discrepancy GP: $y=f_\theta(x)+d(x)+\epsilon$, with $d\sim\mathcal{GP}(0,\tau_d^2k_\ell)$.
+- $(\ell,\tau_d^2)$ are fitted to the residuals of the POPS members, so the GP absorbs the misfit POPS asserts.
+- Each member's predicted outcome becomes $\mu_j(x)=f_{\theta_j}(x)+k(x)^\top C^{-1}r_j$.
+- The outcome-likelihood width becomes $s^2(x)=\tau_d^2-k^\top C^{-1}k+\sigma_n^2$, replacing σ² in steps 5–7.
+- Base weights are the GP marginal likelihood of the parent's residuals, and $x^*_j$ comes from the conditioned curves.
+- At a measured point all $\mu_j$ coincide up to noise, so a replicate carries no information.
+
+**Resolved-optimum step (our extension).** When the best PES gain is below 0.05 nats, the members agree on x\* to within ε. The step then maximises the expected improvement of the best *measured* value, averaged over members: $\sum_j w_j\,\mathbb E[\max(f_j(x)-f_j(x_{n_j}),0)]$, where $x_{n_j}$ is member j's best measured point.
+- The variance is that of the *difference* $d(x)-d(x_{n_j})$, which vanishes as x approaches the incumbent.
+- The criterion is set exactly to zero at every measured point, because no measured point can beat the best measured value.
+- The same criterion from the first step is the `pops-ei` strategy.
+
+Full equations are in `docs/pops_bo_algorithm.pdf`.
+
 **Our additions, labelled in code and UI.**
-- Minimum spacing r = 0.005 between experiments, for every strategy (anti-locality; see Results).
 - ε = 0.01², the x\* resolution we care about.
-- If the best expected gain is < 0.05 nats (or all candidates are tied), measure the highest predicted mean. This generalises the requested tie-break.
+- Outcome conditioning and the resolved-optimum step described above. The highest-mean tie-break is kept as `exploit: 'mean'`.
+- Optional hard minimum spacing r between experiments, applying to every strategy. The default is r = 0 since the principled fix above; it is a UI slider.
 - The literal form is kept as `pops-pes-raw`, with ε = Δx²/12 and no threshold.
 
 **Baselines.**
 - `gp-ei`: zero-mean GP on standardised y with an RBF kernel. Lengthscale and nugget come from a grid search on the log marginal likelihood, with signal variance profiled out and noise variance ≥ ½σ². Uses EI against the best posterior mean at measured points.
 - `gpper-ei`: the same with a periodic kernel at the known P plus a linear term. This control separates the value of the structural prior from POPS.
 - `greedy`: argmax of $f_{\theta_*}$, the uncertainty ablation.
+- `pops-ei`: POPS expected improvement of the best measured value from the first step; a value-seeking control on the same ensemble.
 - `pops-ucb`: POPS mean + 2·sd, a response-variance control.
 
 **Note on sources.** The paper could not be downloaded in the environment where this was built. The equation mapping above follows the specification we were given (Eqs. 6–12, Figs. 3–4); check the numbering against the published version.
 
-## Results (40 seeds; full tables in `results.md`, regenerate with `node validate.js`)
+## Results (40 seeds; full tables in `results.md`)
 
-Best-measured regret at P = 0.45, δ = 0.3, ρ = 0.6, minimum spacing r = 0.005. POPS and greedy use evidence-chosen K unless a K is given.
+Best-measured regret, P = 0.45, δ = 0.3, ρ = 0.6, K by evidence, outcomes conditioned, r = 0. Medians, with the mean at iteration 15:
 
-| strategy | median @3 | median @5 | mean @5 | median @15 | recommendation @15 |
-|---|---|---|---|---|---|
-| POPS + PES | 0.014 | 0.004 | 0.007 | 0.001 | 0.003 |
-| POPS + UCB | 0.008 | 0.001 | 0.005 | 0.001 | 0.001 |
-| greedy θ\* | 0.017 | 0.001 | 0.026 | 0.000 | 0.003 |
-| GP-RBF + EI | 0.139 | 0.092 | — | 0.001 | 0.001 |
-| GP-periodic (known P) + EI | 0.003 | 0.001 | — | 0.000 | 0.001 |
-| POPS + PES, K = 1 | 0.022 | 0.008 | 0.018 | 0.001 | 0.031 |
-| POPS + PES, K = 2 | 0.008 | 0.001 | 0.004 | 0.001 | 0.008 |
-| POPS + PES, K = 4 | 0.051 | 0.004 | 0.018 | 0.001 | 0.001 |
-| POPS + PES, K = 6 | 0.125 | 0.048 | 0.086 | 0.001 | 0.003 |
+| strategy | @3 | @5 | @10 | @15 | mean @15 | recommendation @15 |
+|---|---|---|---|---|---|---|
+| POPS + PES | 0.022 | 0.004 | 0.000 | 0.000 | 0.000 | 0.001 |
+| POPS + EI | 0.008 | 0.001 | 0.000 | 0.000 | 0.000 | 0.003 |
+| POPS + UCB | 0.021 | 0.001 | 0.000 | 0.000 | 0.005 | 0.004 |
+| greedy θ\* | 0.022 | 0.021 | 0.011 | 0.011 | 0.041 | 0.018 |
+| GP-RBF + EI | 0.139 | 0.092 | 0.001 | 0.000 | 0.001 | 0.001 |
+| GP-periodic (known P) + EI | 0.003 | 0.002 | 0.000 | 0.000 | 0.002 | 0.003 |
+| paper-literal PES | 0.082 | 0.075 | 0.047 | 0.029 | 0.036 | 0.003 |
 
-Minimum-spacing ablation (mean regret @15):
+Replicate measurements at r = 0 (exact repeats of a previous x):
 
-| strategy | repeats at r = 0 | r = 0 | r = 0.005 |
-|---|---|---|---|
-| POPS + PES | 72% | 0.010 | 0.000 |
-| POPS + UCB | 78% | 0.013 | 0.001 |
-| greedy θ\* | 86% | 0.048 | 0.000 |
-
-At P = 0.2 the repeat rates are 73–89%, and greedy improves from 0.036 to 0.001.
-
-**Anti-locality.** Without it, the parametric methods spent 72–89% of their steps within 0.005 of an earlier experiment:
-- For greedy and UCB this is their usual lock-in.
-- For PES it happens through the exploitation rule once the members agree on x\*.
-- Approximate PES (Eqs. 7–12) has no anti-locality of its own: hypothetical outcomes are the members' predictions, not the data already measured near x, so a replicate looks informative or is chosen by the tie-break.
-
-The fix is a hard minimum spacing r between experiments for every strategy. r should match the experimental resolution: r = 0.01 already caps precision at P = 0.2. A more principled alternative is to condition hypothetical outcomes on nearby existing data.
+| strategy | conditioned | exact replicates |
+|---|---|---|
+| POPS + PES, old exploit rule (re-measure predicted optimum) | — | 60–68% |
+| POPS + PES, location-EI exploit | no | 1% |
+| POPS + PES, location-EI exploit | yes | 0% |
+| POPS + EI | yes | 0% |
+| POPS + UCB | yes | 49% |
+| greedy θ\* | yes | 79% |
+| GP-RBF + EI | — | 31% |
 
 ### Answer to the principal question
 
-1. **The structured surrogate extrapolates.** Parametric methods reach regret ≈0.01 by iteration 3. GP-RBF needs about 10 (P = 0.45) or 15 (P = 0.2) experiments. This advantage comes from the inductive bias, and the periodic-kernel GP shares it.
-2. **Complexity trades early certainty for model accuracy.**
-   - Low K: narrow early envelope, biased recommendation.
-   - High K: wide early (epistemic) envelope, unbiased late.
-   - With spacing, local measurements fix the *best measured* point for every K. The bias persists in the *recommendation* (K = 1: 0.031 vs K = 4: 0.001).
-   - Evidence-chosen K grows with N and tracks the best fixed K.
-3. **POPS uncertainty vs the point estimate.**
-   - With anti-locality, POPS + PES, POPS + UCB and greedy are within noise of each other on median regret.
-   - Greedy has a heavier early tail (mean @5: 0.026 vs 0.007).
-   - The earlier large POPS advantage came mostly from greedy's repeat lock-in.
-   - In this toy the entropy criterion itself does not beat UCB on the same ensemble.
-4. **Limitations.**
-   - Hard exclusion is a heuristic.
-   - Approximate PES uses a Gaussian entropy for a possibly multimodal x\*.
+1. **The structured surrogate extrapolates.** POPS methods reach regret ≈0.01–0.02 by iteration 3. GP-RBF needs about 10 (P = 0.45) or 15 (P = 0.2) experiments. The periodic-kernel GP, which shares the structural prior, is competitive throughout.
+2. **Representing model-form uncertainty matters; the acquisition function matters less.**
+   - Every POPS-ensemble method beats the greedy point estimate (mean @15: 0.000–0.005 vs 0.041).
+   - POPS + EI is the best early performer (0.008 vs 0.022 for PES at iteration 3).
+   - In this toy, entropy over x\* does not beat EI on the same conditioned ensemble.
+3. **Replicates.** The fix that matters is the resolved-optimum criterion: the improvement of the best measured value, which is exactly zero at measured points. Conditioning outcomes on nearby data makes PES consistent but changes regret little here. Methods without the location criterion (UCB, greedy, GP-EI) still replicate unless the minimum-spacing rule is used.
+4. **Complexity.** Large K starts with a wide epistemic envelope (K = 6: 0.139 at iteration 3) but all K converge. The evidence-chosen K gives the lowest recommendation regret (0.001) and grows with N.
+5. **Limitations.**
+   - Gaussian entropy for a multimodal x\*.
+   - The discrepancy GP adds a nonparametric component.
    - With initial data spanning less than one period, the members can agree on a wrong peak.
 
-## Viewing on a phone
+## Web
 
-Open the published artifact link in the Claude app or a phone browser. For a public URL, enable GitHub Pages on this repository and serve `examples/pops_bo_web/`. The page is static and needs no build step.
+- **Demo:** <https://tomswinburne.github.io/pops-bo/examples/pops_bo_web/>
+- **Algorithm notes:** <https://tomswinburne.github.io/pops-bo/examples/pops_bo_web/docs/pops_bo_algorithm.pdf>
+
+Both are deployed by the Jekyll Pages workflow on `main`. The page is static, with no build step.

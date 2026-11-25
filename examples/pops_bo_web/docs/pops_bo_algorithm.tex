@@ -33,8 +33,9 @@ predictive entropy search over the location of the optimum, following Lee \emph{
 We add two changes. First, the hypothetical outcomes are conditioned on data already measured near
 the candidate through a discrepancy Gaussian process. Second, when the optimum location is resolved,
 the method switches to the expected improvement of the best measured value. Under that criterion
-replicate measurements have exactly zero value. Together these remove the repeated sampling of
-the same point that the unconditioned procedure exhibits.
+replicate measurements have exactly zero value. In a 40-seed study, the second change removes the repeated sampling
+(60--68\% exact replicates before, 0--1\% after). The first makes the entropy criterion consistent with the data but changes regret
+little. The entropy criterion does not outperform expected improvement on the same ensemble in this toy problem.
 \end{abstract}
 
 \section{Problem and notation}
@@ -173,6 +174,14 @@ All strategies share, per seed, the initial design (8 points, stratified in $[0,
 \section{Results}
 \label{sec:results}
 40 seeds, 15 iterations. These tables are generated from \texttt{results.json} by \texttt{docs/make\_tables.js}.
+
+\paragraph{Summary.}
+\begin{enumerate}[itemsep=1pt]
+\item Every POPS-ensemble method beats the greedy point estimate, and all of them beat the stationary GP in the scarce-data regime (iterations 1--5).
+\item POPS + EI is the best early performer. Entropy over $x^*$ does not improve on EI with the same conditioned ensemble.
+\item The improvement-of-best-measured criterion removes replicates, whether or not outcomes are conditioned.
+\item The periodic-kernel GP, which shares the structural prior without a fixed functional form, is competitive throughout.
+\end{enumerate}
 \input{results_tables.tex}
 
 \section{Limitations}

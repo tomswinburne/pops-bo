@@ -80,7 +80,7 @@ const KS = [1, 2, 4, 6, 'auto'];
 for (const P of periods) for (const delta of deltas.filter(d => d > 0)) {
   const key = `P=${P},delta=${delta}`;
   res.complexity[key] = { P, delta, series: {} };
-  const head = `\n### Complexity, P = ${P}, δ = ${delta} (best-measured regret)\n\n| surrogate | median @1 | @3 | @5 | @15 | mean @5 | mean @15 | recommendation median @15 |\n|---|---|---|---|---|---|---|---|---|---|`;
+  const head = `\n### Complexity, P = ${P}, δ = ${delta} (best-measured regret)\n\n| surrogate | median @1 | @3 | @5 | @15 | mean @5 | mean @15 | recommendation median @15 |\n|---|---|---|---|---|---|---|---|`;
   console.log(head); md.push(head);
   const rows = KS.map(K => ['pops-pes', K]).concat([['pops-ei', 'auto'], ['greedy', 'auto'], ['gp-ei', 1]]);
   for (const [s, K] of rows) {

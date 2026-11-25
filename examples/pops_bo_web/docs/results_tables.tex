@@ -1,53 +1,59 @@
-\noindent Settings: $\rho=0.6$, $\sigma_n=0.05$, 40 seeds, initial region $[0,0.5]$, $K$ by evidence, conditioning off, minimum spacing $r=0.005$.
+\noindent Settings: $\rho=0.6$, $\sigma_n=0.05$, 40 seeds, initial region $[0,0.5]$, $K$ by evidence, conditioning on, minimum spacing $r=0$.
 
 \paragraph{Strategies, $P=0.45$, $\delta=0.3$.} Best measured regret (median, with mean) and recommendation regret.
 
 \begin{center}\small\begin{tabular}{lrrrrr}\toprule
 strategy & med.\ @3 & med.\ @5 & med.\ @15 & mean @15 & rec.\ @15\\\midrule
-POPS + PES (conditioned) & 0.014 & 0.004 & 0.001 & 0.000 & 0.003\\
-POPS + PES, paper-literal & 0.060 & 0.053 & 0.029 & 0.031 & 0.003\\
-POPS + UCB & 0.008 & 0.001 & 0.001 & 0.001 & 0.001\\
-Greedy $\theta_*$ & 0.017 & 0.001 & 0.000 & 0.000 & 0.003\\
-GP-RBF + EI & 0.139 & 0.092 & 0.001 & 0.001 & 0.001\\
-GP-periodic + EI & 0.003 & 0.001 & 0.000 & 0.000 & 0.001\\
+POPS + PES (conditioned) & 0.022 & 0.004 & 0.000 & 0.000 & 0.001\\
+POPS + PES, paper-literal & 0.082 & 0.075 & 0.029 & 0.036 & 0.003\\
+POPS + EI & 0.008 & 0.001 & 0.000 & 0.000 & 0.003\\
+POPS + UCB & 0.021 & 0.001 & 0.000 & 0.005 & 0.004\\
+Greedy $\theta_*$ & 0.022 & 0.021 & 0.011 & 0.041 & 0.018\\
+GP-RBF + EI & 0.139 & 0.092 & 0.000 & 0.001 & 0.001\\
+GP-periodic + EI & 0.003 & 0.002 & 0.000 & 0.002 & 0.003\\
 \bottomrule\end{tabular}\end{center}
 
 \paragraph{Strategies, $P=0.2$, $\delta=0.3$.} Best measured regret (median, with mean) and recommendation regret.
 
 \begin{center}\small\begin{tabular}{lrrrrr}\toprule
 strategy & med.\ @3 & med.\ @5 & med.\ @15 & mean @15 & rec.\ @15\\\midrule
-POPS + PES (conditioned) & 0.013 & 0.003 & 0.000 & 0.001 & 0.003\\
-POPS + PES, paper-literal & 0.179 & 0.132 & 0.057 & 0.053 & 0.007\\
-POPS + UCB & 0.003 & 0.003 & 0.003 & 0.002 & 0.003\\
-Greedy $\theta_*$ & 0.003 & 0.003 & 0.003 & 0.001 & 0.003\\
-GP-RBF + EI & 0.142 & 0.130 & 0.003 & 0.006 & 0.005\\
-GP-periodic + EI & 0.007 & 0.003 & 0.003 & 0.002 & 0.003\\
+POPS + PES (conditioned) & 0.010 & 0.001 & 0.000 & 0.000 & 0.003\\
+POPS + PES, paper-literal & 0.179 & 0.141 & 0.053 & 0.063 & 0.005\\
+POPS + EI & 0.007 & 0.000 & 0.000 & 0.000 & 0.003\\
+POPS + UCB & 0.007 & 0.003 & 0.000 & 0.004 & 0.003\\
+Greedy $\theta_*$ & 0.013 & 0.010 & 0.007 & 0.031 & 0.013\\
+GP-RBF + EI & 0.142 & 0.130 & 0.003 & 0.009 & 0.003\\
+GP-periodic + EI & 0.007 & 0.003 & 0.000 & 0.008 & 0.003\\
 \bottomrule\end{tabular}\end{center}
 
 \paragraph{Model complexity, $P=0.45$, $\delta=0.3$.} Best measured regret; the recommendation column shows the model bias.
 
 \begin{center}\small\begin{tabular}{lrrrrr}\toprule
 surrogate & med.\ @1 & med.\ @3 & med.\ @5 & med.\ @15 & rec.\ @15\\\midrule
-POPS + PES, $K=1$ & 0.092 & 0.022 & 0.008 & 0.001 & 0.031\\
-POPS + PES, $K=2$ & 0.076 & 0.008 & 0.001 & 0.001 & 0.008\\
-POPS + PES, $K=4$ & 0.183 & 0.051 & 0.004 & 0.001 & 0.001\\
-POPS + PES, $K=6$ & 0.273 & 0.125 & 0.048 & 0.001 & 0.003\\
-POPS + PES, $K$ by evidence & 0.092 & 0.014 & 0.004 & 0.001 & 0.003\\
-Greedy, $K$ by evidence & 0.092 & 0.017 & 0.001 & 0.000 & 0.003\\
-GP-RBF + EI & 0.234 & 0.139 & 0.092 & 0.001 & 0.001\\
+POPS + PES, $K=1$ & 0.092 & 0.001 & 0.001 & 0.000 & 0.003\\
+POPS + PES, $K=2$ & 0.092 & 0.003 & 0.001 & 0.000 & 0.004\\
+POPS + PES, $K=4$ & 0.183 & 0.051 & 0.003 & 0.000 & 0.003\\
+POPS + PES, $K=6$ & 0.273 & 0.139 & 0.054 & 0.000 & 0.003\\
+POPS + PES, $K$ by evidence & 0.092 & 0.022 & 0.004 & 0.000 & 0.001\\
+POPS + EI, $K$ by evidence & 0.085 & 0.008 & 0.001 & 0.000 & 0.003\\
+Greedy, $K$ by evidence & 0.092 & 0.022 & 0.021 & 0.011 & 0.018\\
+GP-RBF + EI & 0.234 & 0.139 & 0.092 & 0.000 & 0.001\\
 \bottomrule\end{tabular}\end{center}
 
 \paragraph{Anti-locality ablation, $P=0.45$, $\delta=0.3$.} Fraction of BO steps that replicate a previous point (within $0.001$) or land within $0.005$ of one.
 
 \begin{center}\small\begin{tabular}{lccrrrr}\toprule
 strategy & conditioned & $r$ & replicates & within $0.005$ & med.\ @5 & mean @15\\\midrule
-POPS + PES & no & 0 & 0\% & 72\% & 0.008 & 0.010\\
-POPS + PES & no & 0.005 & 0\% & 0\% & 0.004 & 0.000\\
-POPS + UCB & no & 0 & 0\% & 78\% & 0.004 & 0.013\\
-POPS + UCB & no & 0.005 & 0\% & 0\% & 0.001 & 0.001\\
-Greedy $\theta_*$ & no & 0 & 0\% & 86\% & 0.021 & 0.048\\
-Greedy $\theta_*$ & no & 0.005 & 0\% & 0\% & 0.001 & 0.000\\
-GP-RBF + EI & -- & 0 & 0\% & 38\% & 0.092 & 0.001\\
+POPS + PES & no & 0 & 1\% & 41\% & 0.002 & 0.000\\
+POPS + PES & yes & 0 & 0\% & 46\% & 0.004 & 0.000\\
+POPS + PES & yes & 0.005 & 0\% & 0\% & 0.004 & 0.000\\
+POPS + EI & yes & 0 & 0\% & 54\% & 0.001 & 0.000\\
+POPS + EI & yes & 0.005 & 0\% & 0\% & 0.001 & 0.000\\
+POPS + UCB & yes & 0 & 49\% & 74\% & 0.001 & 0.005\\
+POPS + UCB & yes & 0.005 & 0\% & 0\% & 0.001 & 0.000\\
+Greedy $\theta_*$ & yes & 0 & 79\% & 86\% & 0.021 & 0.041\\
+Greedy $\theta_*$ & yes & 0.005 & 0\% & 0\% & 0.001 & 0.000\\
+GP-RBF + EI & -- & 0 & 31\% & 38\% & 0.092 & 0.001\\
 GP-RBF + EI & -- & 0.005 & 0\% & 0\% & 0.092 & 0.001\\
 \bottomrule\end{tabular}\end{center}
 
@@ -55,12 +61,15 @@ GP-RBF + EI & -- & 0.005 & 0\% & 0\% & 0.092 & 0.001\\
 
 \begin{center}\small\begin{tabular}{lccrrrr}\toprule
 strategy & conditioned & $r$ & replicates & within $0.005$ & med.\ @5 & mean @15\\\midrule
-POPS + PES & no & 0 & 0\% & 73\% & 0.010 & 0.011\\
-POPS + PES & no & 0.005 & 0\% & 0\% & 0.003 & 0.001\\
-POPS + UCB & no & 0 & 0\% & 82\% & 0.007 & 0.007\\
-POPS + UCB & no & 0.005 & 0\% & 0\% & 0.003 & 0.002\\
-Greedy $\theta_*$ & no & 0 & 0\% & 89\% & 0.010 & 0.036\\
-Greedy $\theta_*$ & no & 0.005 & 0\% & 0\% & 0.003 & 0.001\\
-GP-RBF + EI & -- & 0 & 0\% & 7\% & 0.130 & 0.009\\
+POPS + PES & no & 0 & 1\% & 42\% & 0.003 & 0.000\\
+POPS + PES & yes & 0 & 1\% & 52\% & 0.001 & 0.000\\
+POPS + PES & yes & 0.005 & 0\% & 0\% & 0.003 & 0.002\\
+POPS + EI & yes & 0 & 0\% & 66\% & 0.000 & 0.000\\
+POPS + EI & yes & 0.005 & 0\% & 0\% & 0.003 & 0.002\\
+POPS + UCB & yes & 0 & 65\% & 80\% & 0.003 & 0.004\\
+POPS + UCB & yes & 0.005 & 0\% & 0\% & 0.003 & 0.002\\
+Greedy $\theta_*$ & yes & 0 & 84\% & 88\% & 0.010 & 0.031\\
+Greedy $\theta_*$ & yes & 0.005 & 0\% & 0\% & 0.003 & 0.001\\
+GP-RBF + EI & -- & 0 & 5\% & 7\% & 0.130 & 0.009\\
 GP-RBF + EI & -- & 0.005 & 0\% & 0\% & 0.130 & 0.006\\
 \bottomrule\end{tabular}\end{center}
