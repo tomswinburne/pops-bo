@@ -78,6 +78,7 @@ This was checked against the direct $\mathcal N(0,\sigma_n^2 I+\tau^2\Phi\Phi^\t
 During acquisition only the weights change. POPS is refitted after each real measurement.
 
 **Our additions, labelled in code and UI.**
+- Minimum spacing r = 0.005 between experiments, for every strategy (anti-locality; see Results).
 - ε = 0.01², the x\* resolution we care about.
 - If the best expected gain is < 0.05 nats (or all candidates are tied), measure the highest predicted mean. This generalises the requested tie-break.
 - The literal form is kept as `pops-pes-raw`, with ε = Δx²/12 and no threshold.
@@ -92,36 +93,54 @@ During acquisition only the weights change. POPS is refitted after each real mea
 
 ## Results (40 seeds; full tables in `results.md`, regenerate with `node validate.js`)
 
-Best-measured regret at P = 0.45, δ = 0.3, ρ = 0.6. The first five rows are POPS + PES with fixed K.
+Best-measured regret at P = 0.45, δ = 0.3, ρ = 0.6, minimum spacing r = 0.005. POPS and greedy use evidence-chosen K unless a K is given.
 
-| surrogate | median @3 | median @15 | mean @15 |
+| strategy | median @3 | median @5 | mean @5 | median @15 | recommendation @15 |
+|---|---|---|---|---|---|
+| POPS + PES | 0.014 | 0.004 | 0.007 | 0.001 | 0.003 |
+| POPS + UCB | 0.008 | 0.001 | 0.005 | 0.001 | 0.001 |
+| greedy θ\* | 0.017 | 0.001 | 0.026 | 0.000 | 0.003 |
+| GP-RBF + EI | 0.139 | 0.092 | — | 0.001 | 0.001 |
+| GP-periodic (known P) + EI | 0.003 | 0.001 | — | 0.000 | 0.001 |
+| POPS + PES, K = 1 | 0.022 | 0.008 | 0.018 | 0.001 | 0.031 |
+| POPS + PES, K = 2 | 0.008 | 0.001 | 0.004 | 0.001 | 0.008 |
+| POPS + PES, K = 4 | 0.051 | 0.004 | 0.018 | 0.001 | 0.001 |
+| POPS + PES, K = 6 | 0.125 | 0.048 | 0.086 | 0.001 | 0.003 |
+
+Minimum-spacing ablation (mean regret @15):
+
+| strategy | repeats at r = 0 | r = 0 | r = 0.005 |
 |---|---|---|---|
-| K = 1 | 0.031 | 0.031 | 0.032 |
-| K = 2 | 0.013 | 0.008 | 0.011 |
-| K = 4 | 0.051 | 0.001 | 0.002 |
-| K = 6 | 0.125 | 0.003 | 0.005 |
-| K by evidence | 0.014 | 0.004 | 0.010 |
-| greedy θ\*, K by evidence | 0.022 | 0.011 | 0.048 |
-| POPS + UCB, K by evidence | 0.022 | 0.000 | 0.013 |
-| GP-RBF + EI | 0.139 | 0.000 | 0.001 |
-| GP-periodic (known P) + EI | 0.003 | 0.000 | 0.002 |
+| POPS + PES | 72% | 0.010 | 0.000 |
+| POPS + UCB | 78% | 0.013 | 0.001 |
+| greedy θ\* | 86% | 0.048 | 0.000 |
+
+At P = 0.2 the repeat rates are 73–89%, and greedy improves from 0.036 to 0.001.
+
+**Anti-locality.** Without it, the parametric methods spent 72–89% of their steps within 0.005 of an earlier experiment:
+- For greedy and UCB this is their usual lock-in.
+- For PES it happens through the exploitation rule once the members agree on x\*.
+- Approximate PES (Eqs. 7–12) has no anti-locality of its own: hypothetical outcomes are the members' predictions, not the data already measured near x, so a replicate looks informative or is chosen by the tie-break.
+
+The fix is a hard minimum spacing r between experiments for every strategy. r should match the experimental resolution: r = 0.01 already caps precision at P = 0.2. A more principled alternative is to condition hypothetical outcomes on nearby existing data.
 
 ### Answer to the principal question
 
-1. **The structured surrogate extrapolates.** From 8 points in [0, 0.5], the parametric methods find the far peak immediately. GP-RBF needs about 5 experiments at P = 0.45 and 8–10 at P = 0.2. This advantage comes from the inductive bias.
-2. **Complexity trades early certainty for late accuracy.**
-   - Low K: narrow initial POPS envelope, but a regret plateau set by the omitted harmonics.
-   - High K: wide initial (epistemic) envelope that keeps shrinking.
-   - The evidence-chosen K grows with N and tracks the lower envelope of the fixed-K curves.
-   - The complexity panel in the UI shows envelope, true error and evidence against N for every K on the current campaign.
+1. **The structured surrogate extrapolates.** Parametric methods reach regret ≈0.01 by iteration 3. GP-RBF needs about 10 (P = 0.45) or 15 (P = 0.2) experiments. This advantage comes from the inductive bias, and the periodic-kernel GP shares it.
+2. **Complexity trades early certainty for model accuracy.**
+   - Low K: narrow early envelope, biased recommendation.
+   - High K: wide early (epistemic) envelope, unbiased late.
+   - With spacing, local measurements fix the *best measured* point for every K. The bias persists in the *recommendation* (K = 1: 0.031 vs K = 4: 0.001).
+   - Evidence-chosen K grows with N and tracks the best fixed K.
 3. **POPS uncertainty vs the point estimate.**
-   - Effect size: with evidence-chosen K at δ = 0.3, POPS + PES cuts mean regret at iteration 15 by about 4–5×: 0.010 vs 0.048 at P = 0.45 and 0.011 vs 0.036 at P = 0.2. The gain comes from removing seeds where greedy stays locked on a biased optimum.
-   - POPS + UCB performs about as well as PES, so most of the gain comes from the ensemble, not from the entropy criterion. At δ ≤ 0.12 the gaps are small.
-   - Paper-literal PES (`pops-pes-raw`) keeps exploring and has much worse best-measured regret.
-4. **Controls.** GP-RBF catches up by about 10 iterations. The periodic-kernel GP with known P is the strongest method throughout, because it has the structural prior without a fixed form. In this toy the prior is expressible as a kernel; for mechanistic models like the kinetic networks in Lee et al. it generally is not.
-5. **Limitations.**
-   - BO data cluster near the optimum, so the global fit (and the evidence for higher K) improves slowly once the method starts exploiting.
-   - With initial data spanning less than one period, the members can agree on a wrong peak. Then H[x\*] ≈ 0 and PES has nothing to resolve.
+   - With anti-locality, POPS + PES, POPS + UCB and greedy are within noise of each other on median regret.
+   - Greedy has a heavier early tail (mean @5: 0.026 vs 0.007).
+   - The earlier large POPS advantage came mostly from greedy's repeat lock-in.
+   - In this toy the entropy criterion itself does not beat UCB on the same ensemble.
+4. **Limitations.**
+   - Hard exclusion is a heuristic.
+   - Approximate PES uses a Gaussian entropy for a possibly multimodal x\*.
+   - With initial data spanning less than one period, the members can agree on a wrong peak.
 
 ## Viewing on a phone
 

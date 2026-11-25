@@ -268,30 +268,29 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
   <h2 id="findH">What the comparison shows</h2>
   <div id="findings" class="prose">
 <h3>Setup</h3>
-<p>The truth is a periodic response with harmonics up to k = 8, amplitude δ·ρ^(k−2), plus noise σ = 0.05. Every finite-K surrogate is therefore misspecified, by an amount that shrinks with K. Setting ρ = 0 recovers the original spec function, for which K = 2 is exact. The numbers below are 40-seed medians and means of best-measured regret at P = 0.45; P = 0.2 behaves the same way (toggle above).</p>
-<h3>1 · Complexity trades early certainty for late accuracy</h3>
-<p>With POPS + PES at fixed K and δ = 0.3:</p>
-<ul>
-<li>K = 1 is the fastest start, but it plateaus at a regret of 0.031. Its POPS envelope stays wide at the level of the harmonics it omits.</li>
-<li>K = 4 is slower at iteration 3 (0.051), because its epistemic envelope starts wide, but it reaches 0.001 by iteration 15.</li>
-<li>K = 6 is slower again (0.125 at iteration 3).</li>
-</ul>
-<p>Choosing K each step by Bayesian evidence follows the lower envelope of these curves: 0.014 at iteration 3 and 0.004 at iteration 15. The selected K grows with N; see the complexity panel above.</p>
+<p>The truth is a periodic response with harmonics up to k = 8, amplitude δ·ρ^(k−2), plus noise σ = 0.05. Every finite-K surrogate is misspecified, by an amount that shrinks with K; setting ρ = 0 recovers the original spec function. No strategy may measure within r = 0.005 of a previous experiment. The numbers below are 40-seed best-measured regret at P = 0.45, δ = 0.3 unless stated; the full tables are in <code>results.md</code>.</p>
+<h3>1 · Re-measuring the same point was the main pathology</h3>
+<p>With r = 0, the parametric methods spent 72–89% of their steps within 0.005 of an earlier experiment. For PES this happened through the exploitation rule, which applies once the members agree on x* to within ε. Approximate PES itself has no anti-locality: hypothetical outcomes come from the members, not from the data already measured there, so it cannot tell that a replicate only re-averages noise.</p>
+<p>Requiring r = 0.005 removes the repeats. The repeated measurements become local probes around the model's biased optimum. Mean regret at iteration 15 falls from 0.010 to 0.000 for POPS + PES and from 0.048 to 0.000 for greedy. With r = 0.01, P = 0.2 is held back (median 0.007), because sharper peaks can place the true optimum inside an excluded zone. r should therefore match the experimental resolution.</p>
 <h3>2 · A structured surrogate extrapolates where a stationary GP must explore</h3>
-<p>Every parametric method finds the far peak from 8 points in [0, 0.5]. GP-RBF + EI has regret 0.139 at iteration 3 and 0.092 at iteration 5. The parametric methods are ahead for the first 5–8 experiments, and GP-RBF catches up by about iteration 10. The periodic-kernel GP, given P, is the strongest baseline throughout. It has the same structural prior without a fixed functional form.</p>
-<h3>3 · POPS uncertainty versus the point estimate</h3>
-<p>Both methods use evidence-chosen K. At δ = 0.3, POPS + PES beats greedy θ*:</p>
+<p>From 8 points in [0, 0.5], the parametric methods reach regret ≈ 0.003–0.017 by iteration 3. GP-RBF + EI is at 0.139 at iteration 3 and 0.092 at iteration 5, and catches up only by iteration 10 (P = 0.45) or 15 (P = 0.2). The periodic-kernel GP, given P, is as good as the best parametric method throughout.</p>
+<h3>3 · Complexity trades early certainty for model accuracy</h3>
+<p>Fixed K shows the expected ordering early. Median best-measured regret at iteration 3:</p>
 <ul>
-<li>P = 0.45: mean regret at iteration 15 is 0.010 against 0.048, and the median is 0.004 against 0.011.</li>
-<li>P = 0.2: mean regret at iteration 15 is 0.011 against 0.036.</li>
+<li>K = 2: 0.008</li>
+<li>K = 1: 0.022</li>
+<li>K = 4: 0.051</li>
+<li>K = 6: 0.125</li>
 </ul>
-<p>Greedy keeps re-measuring a biased optimum on some seeds; POPS + PES does not. POPS + UCB, the response-variance control, performs about the same as PES, so the gain comes mostly from the ensemble rather than from the entropy criterion. At δ ≤ 0.12 the differences are small. The acquisition panel shows that PES maxima are generally not where the predictive sd peaks.</p>
+<p>Large K starts with a wide epistemic envelope. With spacing, every K eventually reaches ≈ 0.001 in best-measured regret, because local measurements correct the model. The bias remains in what the model <i>recommends</i>: recommendation regret at iteration 15 is 0.031 for K = 1, 0.008 for K = 2 and 0.001 for K = 4. Choosing K by evidence gives 0.014 at iteration 3 and a recommendation regret of 0.003. The selected K grows with N; see the complexity panel.</p>
+<h3>4 · What POPS + PES adds over the point estimate</h3>
+<p>With spacing on, POPS + PES, POPS + UCB and greedy θ* perform similarly. At P = 0.45 and iteration 5, the medians are 0.004, 0.001 and 0.001. Greedy has a heavier early tail: mean regret at iteration 5 is 0.026, against 0.007 for POPS + PES and 0.005 for POPS + UCB. The earlier 4–5× advantage of POPS + PES at iteration 15 came mostly from greedy re-measuring one point. In this toy the ensemble's main value is in the first few experiments and in the honesty of the recommendation's uncertainty, not in final regret. PES maxima are generally not where the predictive sd peaks (acquisition panel), but this does not translate into a regret advantage over UCB here.</p>
 <h3>Caveats</h3>
 <ul>
-<li>Paper-literal PES (grid-scale ε, no exploitation rule) explores indefinitely. Its recommendation regret matches POPS + PES, but its best-measured regret is much worse. The default uses ε = 0.01² and measures the predicted optimum once the expected gain is below 0.05 nats; this is our modification.</li>
-<li>The ensemble is POPS plus Bayesian-ridge epistemic draws, as in <code>popsregression</code>. Without the epistemic term, a model with p ≥ N interpolates the data and looks spuriously certain.</li>
-<li>BO data cluster near the optimum, so the global fit improves slowly once the method starts exploiting. The evidence then stops increasing K.</li>
-<li>With initial data spanning less than one period, the members can all agree on the wrong peak. In that case H[x*] ≈ 0 and PES has nothing to resolve.</li>
+<li>Paper-literal PES (grid-scale ε, no exploitation rule) explores indefinitely and has poor best-measured regret.</li>
+<li>The ensemble includes Bayesian-ridge epistemic draws, as in <code>popsregression</code>; without them, a model with p ≥ N looks spuriously certain.</li>
+<li>Hard exclusion is a simple fix. A more principled version would condition each hypothetical outcome on the measurements already near x, so that PES itself assigns replicates no value.</li>
+<li>With initial data spanning less than one period, the members can all agree on a wrong peak, and PES has nothing to resolve.</li>
 </ul>
 </div>
 </section>
