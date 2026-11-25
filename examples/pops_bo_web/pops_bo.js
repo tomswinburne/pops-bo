@@ -257,7 +257,7 @@
     let rss = 0;
     for (const r of resid) rss += r * r;
     const sigma2 = Math.max(rss / dof, (opts.noise || 0) ** 2, 1e-10);
-    return { theta, members, popsMembers, parent, resid, sigma2, X, ys, K, lambda, epistemic };
+    return { theta, members, popsMembers, parent, resid, sigma2, X, ys, xs: xs.slice(), K, lambda, epistemic, noise: opts.noise || 0 };
   }
 
   function predictTheta(theta, xg) {
@@ -280,28 +280,80 @@
    *  Only weights change during acquisition; parameters are refitted after the real
    *  measurement.
    */
-  function popsState(pops, grid) {
-    const M = pops.members.length, N = pops.popsMembers.length;
-    const curves = pops.members.map(th => predictTheta(th, grid));
-    const xstar = curves.map(c => grid[argmax(c)]);
-    // Data log-likelihood of each POPS parent (paper's rule); epistemic children share their
-    // parent's weight (they are already posterior draws, so re-weighting them would double count).
-    const parentLog = new Float64Array(N);
-    if (pops.useDataLik !== false) {
-      for (let i = 0; i < N; i++) {
-        let s = 0;
-        for (let n = 0; n < pops.X.length; n++) {
-          const r = pops.ys[n] - dot(pops.X[n], pops.popsMembers[i]);
-          s += r * r;
-        }
-        parentLog[i] = -s / (2 * pops.sigma2);
+  /*
+   * Discrepancy model (Kennedy & O'Hagan style), used to condition hypothetical outcomes on
+   * data already measured near a candidate:  y(x) = f_theta(x) + d(x) + eps,
+   *   d ~ GP(0, tau2 exp(-(x-x')^2 / 2 l^2)),  eps ~ N(0, sigma_n^2).
+   * (l, tau2) maximise the marginal likelihood of the theta* residuals with sigma_n known, so
+   * tau2 is the residual misfit POPS already sees (sigma_lik^2 ~ tau2 + sigma_n^2), now with a
+   * correlation length.
+   */
+  // residuals: array of residual vectors (one per POPS member), treated as independent draws
+  // of the discrepancy; hyperparameters maximise their summed GP marginal likelihood.
+  function fitDiscrepancy(xs, residuals, noise) {
+    const n = xs.length, s2n = Math.max(noise * noise, 1e-8);
+    let v = 0; for (const r of residuals) for (const q of r) v += q * q; v /= n * residuals.length;
+    const taus = logspace(1e-5, Math.max(4 * v, 1e-4), 14), ls = logspace(0.005, 0.5, 14);
+    let best = null;
+    for (const l of ls) {
+      const R = [];
+      for (let i = 0; i < n; i++) { R.push(new Float64Array(n)); for (let j = 0; j < n; j++) R[i][j] = Math.exp(-0.5 * ((xs[i] - xs[j]) / l) ** 2); }
+      for (const t of taus) {
+        const C = R.map((r, i) => { const c = Float64Array.from(r, q => t * q); c[i] += s2n; return c; });
+        const L = cholesky(C); if (!L) continue;
+        let ld = 0; for (let i = 0; i < n; i++) ld += 2 * Math.log(L[i][i]);
+        let lml = 0;
+        for (const r of residuals) { const z = forwardSolve(L, r); lml += -0.5 * dot(z, z) - 0.5 * ld; }
+        if (!best || lml > best.lml) best = { lml, l, tau2: t, L };
       }
     }
+    return { ...best, xs, noise2: s2n };
+  }
+  function discKernelRows(D, grid) { // k(grid_g, x_n)
+    return Array.from(grid, x => Float64Array.from(D.xs, xn => D.tau2 * Math.exp(-0.5 * ((x - xn) / D.l) ** 2)));
+  }
+
+  function popsState(pops, grid, opts) {
+    opts = opts || {};
+    const M = pops.members.length, N = pops.popsMembers.length, G = grid.length;
+    const resOf = th => Float64Array.from(pops.ys, (y, n) => y - dot(pops.X[n], th));
+    let curves = pops.members.map(th => predictTheta(th, grid));
+    let thetaCurve = predictTheta(pops.theta, grid);
+    let s2 = null, s2lat = null, D = null, Vd = null;
+    const parentLog = new Float64Array(N);
+    if (opts.discrepancy && N >= 2) {
+      // Condition every member on the data: mu_j(x) = f_j(x) + k(x)^T C^{-1} r_j,
+      // predictive variance s2(x) = tau2 - k^T C^{-1} k + sigma_n^2 (same for all members).
+      D = fitDiscrepancy(pops.xs, pops.popsMembers.map(resOf), pops.noise);
+      const Kg = discKernelRows(D, grid);
+      const correct = (curve, r) => {
+        const alpha = cholSolve(D.L, r);
+        for (let g = 0; g < G; g++) curve[g] += dot(Kg[g], alpha);
+        return curve;
+      };
+      curves = curves.map((c, j) => correct(c, resOf(pops.members[j])));
+      thetaCurve = correct(thetaCurve, pops.resid);
+      s2 = new Float64Array(G); s2lat = new Float64Array(G);
+      Vd = new Array(G);
+      for (let g = 0; g < G; g++) { const v = forwardSolve(D.L, Kg[g]); Vd[g] = v; s2lat[g] = Math.max(D.tau2 - dot(v, v), 1e-12); s2[g] = s2lat[g] + D.noise2; }
+      // base weight of each POPS parent: GP marginal likelihood of its residuals
+      if (pops.useDataLik !== false) for (let i = 0; i < N; i++) { const z = forwardSolve(D.L, resOf(pops.popsMembers[i])); parentLog[i] = -0.5 * dot(z, z); }
+    } else if (pops.useDataLik !== false) {
+      // Data log-likelihood of each POPS parent (paper's rule); epistemic children share their
+      // parent's weight (they are already posterior draws, so re-weighting them would double count).
+      for (let i = 0; i < N; i++) {
+        const r = resOf(pops.popsMembers[i]);
+        parentLog[i] = -dot(r, r) / (2 * pops.sigma2);
+      }
+    }
+    const xstar = curves.map(c => grid[argmax(c)]);
     const count = new Float64Array(N);
     for (const i of pops.parent) count[i]++;
     const logw0 = Array.from(pops.parent, i => parentLog[i] - Math.log(count[i]));
     const w0 = softmax(logw0);
-    return { curves, xstar, logw0, w0, M };
+    // posterior covariance of the discrepancy between two grid points (for differences)
+    const discCov = D ? (g, h) => D.tau2 * Math.exp(-0.5 * ((grid[g] - grid[h]) / D.l) ** 2) - dot(Vd[g], Vd[h]) : null;
+    return { curves, xstar, logw0, w0, M, s2, s2lat, disc: D, discCov, thetaCurve };
   }
 
   function weightedVar(xs, w) {
@@ -315,8 +367,10 @@
     const { curves, xstar, logw0, w0, M } = st;
     const H0 = gaussEntropy(weightedVar(xstar, w0), eps);
     const G = grid.length, EH = new Float64Array(G);
-    const lw = new Float64Array(M), col = new Float64Array(M), inv2s = 1 / (2 * sigma2);
+    const lw = new Float64Array(M), col = new Float64Array(M);
     for (let g = 0; g < G; g++) {
+      // outcome-likelihood width: data-conditioned predictive variance if available (Eq. 9-10)
+      const inv2s = 1 / (2 * (st.s2 ? st.s2[g] : sigma2));
       for (let j = 0; j < M; j++) col[j] = curves[j][g];
       let acc = 0;
       for (let k = 0; k < M; k++) {
@@ -463,7 +517,7 @@
     // eligible for the NEXT experiment (the recommendation x_hat is unaffected). A repeat
     // measurement only re-averages noise; under misspecification the nearby points carry the
     // information the model cannot represent. Falls back to all candidates if none are eligible.
-    const r = cfg.minSpacing != null ? cfg.minSpacing : 0.005;
+    const r = cfg.minSpacing != null ? cfg.minSpacing : 0;
     const eligible = new Uint8Array(grid.length).fill(1);
     if (r > 0) {
       for (let g = 0; g < grid.length; g++) for (const x of xs) if (Math.abs(grid[g] - x) < r) { eligible[g] = 0; break; }
@@ -478,9 +532,9 @@
       out.K = K;
       const pops = fitPOPS(xs, ys, { variant: cfg.popsVariant, noise: cfg.noise, lambda: lam, K, epistemic: cfg.epistemic, nEns: cfg.nEns });
       pops.useDataLik = cfg.useDataLik;
-      const st = popsState(pops, grid);
+      const st = popsState(pops, grid, { discrepancy: cfg.discrepancy !== false });
       const stats = ensembleStats(st, grid);
-      const thetaCurve = predictTheta(pops.theta, grid);
+      const thetaCurve = st.thetaCurve;
       out.pops = pops; out.st = st; out.stats = stats; out.thetaCurve = thetaCurve;
       out.mean = stats.mean;
       if (s === 'greedy') {
@@ -505,7 +559,41 @@
         // Converged / tied: every member agrees on x* to within the resolution eps, so no
         // candidate is informative -> exploit the highest predicted mean.
         const tol = cfg.gainTol != null ? cfg.gainTol : 0.05;
-        if (mx - mn < 1e-9 || mx < tol) { out.next = pick(stats.mean); out.tieBreak = true; }
+        if (mx - mn < 1e-9 || mx < tol) {
+          out.tieBreak = true;
+          if (cfg.exploit === 'mean') out.next = pick(stats.mean);
+          else {
+            // Converged on x*: expected improvement in the best MEASURED value, averaged over the
+            // ensemble hypotheses. Under member j the gain from measuring x is
+            //   max(f_j(x) - max_n f_j(x_n), 0),
+            // which is exactly zero at any measured location, so replicates have no value. With the
+            // discrepancy model, f_j(x) ~ N(mu_j(x), s2_lat(x)) and the expectation is the EI formula.
+            // Under the discrepancy model f_j(x) - f_j(x_inc) is Gaussian with mean mu_j(x) - mu_j(x_inc)
+            // and variance Var[d(x) - d(x_inc)], which vanishes as x -> x_inc (they are correlated).
+            const near = xs.map(x => Math.round(x * (grid.length - 1)));
+            const ei = new Float64Array(grid.length), sdCache = new Map();
+            const sdDiff = gi => {
+              if (!st.discCov) return null;
+              if (!sdCache.has(gi)) sdCache.set(gi, Float64Array.from(grid, (_, g) => Math.sqrt(Math.max(st.s2lat[g] + st.s2lat[gi] - 2 * st.discCov(g, gi), 0))));
+              return sdCache.get(gi);
+            };
+            for (let j = 0; j < st.M; j++) {
+              const c = st.curves[j]; let gi = near[0];
+              for (const g of near) if (c[g] > c[gi]) gi = g;
+              const sdv = sdDiff(gi);
+              for (let g = 0; g < grid.length; g++) {
+                const d = c[g] - c[gi], sd = sdv ? sdv[g] : 0;
+                ei[g] += st.w0[j] * (sd > 1e-9 ? d * normCdf(d / sd) + sd * normPdf(d / sd) : Math.max(d, 0));
+              }
+            }
+            // Exact identity: f(x_m) <= max_n f(x_n) for any measured x_m, so its improvement is zero.
+            for (const g of near) ei[g] = 0;
+            out.exploitAcq = ei;
+            out.next = pick(ei);
+            // nothing to gain anywhere: fall back to the most informative candidate
+            if (!(ei[out.next] > 1e-9)) { out.next = pick(pes.gain); out.exploitFallback = true; }
+          }
+        }
         else {
           // ties within tolerance: highest predicted mean among the top acquisition values
           let best = -1;

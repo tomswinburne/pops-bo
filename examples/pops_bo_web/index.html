@@ -154,6 +154,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
     <div class="toggles">
       <label><input id="kauto" type="checkbox" checked> Choose K by Bayesian evidence</label>
       <label><input id="epi" type="checkbox" checked> Add epistemic term</label>
+      <label><input id="cond" type="checkbox" checked> Condition outcomes on nearby data</label>
     </div>
   </div>
   <div class="ctl">
@@ -193,8 +194,8 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
     <input id="seed" type="number" min="1" max="9999" step="1" value="3">
   </div>
   <div class="ctl">
-    <label for="spacing">Minimum spacing <span class="sym">r</span> <output id="spacingOut">0.005</output></label>
-    <input id="spacing" type="range" min="0" max="0.04" step="0.005" value="0.005">
+    <label for="spacing">Minimum spacing <span class="sym">r</span> <output id="spacingOut">0.000</output></label>
+    <input id="spacing" type="range" min="0" max="0.04" step="0.005" value="0">
   </div>
   <div class="ctl">
     <label for="variant">POPS construction</label>
@@ -296,7 +297,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
 </section>
 
 <footer>
-  <p>Everything runs in your browser: <span class="mono">pops_bo.js</span> holds the POPS fit, PES, GP and EI code that <span class="mono">validate.js</span> also uses in Node to produce the precomputed results. Source: <a href="https://github.com/tomswinburne/pops-bo/tree/main/examples/pops_bo_web">tomswinburne/pops-bo · examples/pops_bo_web</a>.</p>
+  <p>Everything runs in your browser: <span class="mono">pops_bo.js</span> holds the POPS fit, PES, GP and EI code that <span class="mono">validate.js</span> also uses in Node to produce the precomputed results. Source: <a href="https://github.com/tomswinburne/pops-bo/tree/main/examples/pops_bo_web">tomswinburne/pops-bo · examples/pops_bo_web</a>. Algorithm notes: <a href="docs/pops_bo_algorithm.pdf">pops_bo_algorithm.pdf</a>.</p>
   <p>Lee, J., Augustine, L. J., Yang, P., and Perez, D. (2026). Efficient Bayesian Optimization of Separation Chemistry in the Scarce-Data Regime Using Kinetic Reaction Networks. ChemRxiv, preprint, July 13, 2026. <a href="https://doi.org/10.26434/chemrxiv.15004837/v2">https://doi.org/10.26434/chemrxiv.15004837/v2</a></p>
 </footer>
 </div>
@@ -396,6 +397,7 @@ const cfgFromUI = () => ({
   K: $('kauto').checked ? 'auto' : +$('kslider').value,
   epistemic: $('epi').checked,
   minSpacing: +$('spacing').value,
+  discrepancy: $('cond').checked,
   iters: ITERS, grid: GRID,
 });
 let S = null, P = null, ghosts = {}, ghostTimer = null;
@@ -481,7 +483,7 @@ function drawMain() {
   items.push(['next experiment', css('--next')]);
   legend($('legMain'), items);
   $('capMain').textContent = pops
-    ? `Each orange curve is one POPS member θ_i: the ridge fit constrained to pass exactly through observation i (${c.popsVariant === 'exact' ? 'exact rank-one solution' : 'Eq. 6 approximation, 10× weight on point i'})${P.pops.epistemic ? ', plus a draw from the Bayesian-ridge epistemic posterior' : ''}. Model: K = ${P.K} harmonic${P.K > 1 ? 's' : ''}. The spread between members is the model-form uncertainty implied by the residuals. Open circles mark each member's own maximum x*_i; the triangle marks the ensemble-mean optimum; the dotted vertical line is the true optimum.`
+    ? `Each orange curve is one POPS member θ_i: the ridge fit constrained to pass exactly through observation i (${c.popsVariant === 'exact' ? 'exact rank-one solution' : 'Eq. 6 approximation, 10× weight on point i'})${P.pops.epistemic ? ', plus a draw from the Bayesian-ridge epistemic posterior' : ''}${P.st.disc ? ', then conditioned on the data through the discrepancy GP' : ''}. Model: K = ${P.K} harmonic${P.K > 1 ? 's' : ''}. The spread between members is the model-form uncertainty implied by the residuals. Open circles mark each member's own maximum x*_i; the triangle marks the ensemble-mean optimum; the dotted vertical line is the true optimum.`
     : `GP posterior mean and ±2σ (latent function). Hyperparameters maximise the log marginal likelihood (grid search), with the noise variance bounded below by the known σ². Triangle: GP-mean optimum. Dotted vertical: true optimum.`;
 }
 
@@ -514,13 +516,14 @@ function drawXs() {
 }
 
 function drawAcq() {
-  const c = S.cfg, a = Array.from(P.acq);
+  const exploitView = P.tieBreak && P.exploitAcq;
+  const c = S.cfg, a = Array.from(exploitView ? P.exploitAcq : P.acq);
   let lo = Math.min(...a), hi = Math.max(...a); if (hi - lo < 1e-12) { hi = lo + 1; }
   const pad = 0.08 * (hi - lo);
   const p = plot($('pAcq'), { xlim: [0, 1], ylim: [lo - pad, hi + pad], xlabel: 'x', margin: { l: 48, b: 32 }, yfmt: v => Math.abs(v) < 1e-3 && v !== 0 ? v.toExponential(0) : +v.toPrecision(3) });
   const col = css(COLORS[c.strategy] || '--pops');
-  const items = [[P.acqLabel, col]];
-  if (P.pes) {
+  const items = [[exploitView ? 'E[improvement of best measured value] (maximise)' : P.acqLabel, col]];
+  if (P.pes && !exploitView) {
     // overlay POPS predictive sd rescaled to the acquisition axis, to show PES != max variance
     const sd = Array.from(P.stats.sd), smax = Math.max(...sd) || 1;
     p.line(GRID, sd.map(s => lo + (hi - lo) * s / smax), { stroke: css('--muted'), 'stroke-width': 1.2, 'stroke-dasharray': '4 3' });
@@ -542,7 +545,7 @@ function drawAcq() {
   if (S.t < ITERS) { p.vline(P.xNext, { stroke: css('--next'), 'stroke-width': 1.5 }); p.dot(P.xNext, a[P.next], 4.5, { fill: css('--next'), top: true }); }
   legend($('legAcq'), items);
   let cap = '';
-  if (P.pes) cap = `Expected reduction in the Gaussian-approximated entropy of x* (Eqs. 7–12): each candidate x is scored by reweighting the ensemble for every hypothetical outcome y_j = f_θj(x), without refitting. ` + (P.tieBreak ? 'All members agree on x* to within the ε resolution, so the information gain is below threshold and the highest predicted mean among eligible candidates is measured instead.' : 'The peak of this curve is generally not where the predictive sd (grey) peaks.');
+  if (P.pes) cap = `Expected reduction in the Gaussian-approximated entropy of x* (Eqs. 7–12): each candidate x is scored by reweighting the ensemble for every hypothetical outcome y_j = f_θj(x), without refitting. ` + (P.tieBreak ? (exploitView ? 'All members agree on x* to within the ε resolution, so PES has nothing left to resolve. Shown instead: the expected improvement of the best measured value, averaged over members. It is exactly zero at every measured point, so replicates are never chosen.' : 'All members agree on x* to within the ε resolution; the highest predicted mean is measured.') : 'The peak of this curve is generally not where the predictive sd (grey) peaks.') + (P.st && P.st.disc ? ` Outcomes are conditioned on nearby data through a discrepancy GP (ℓ = ${P.st.disc.l.toFixed(3)}, τ = ${Math.sqrt(P.st.disc.tau2).toFixed(3)}), so candidates next to measurements carry little information.` : '');
   else if (c.strategy === 'greedy') cap = 'Greedy measures the maximum of the single least-squares fit θ*. It uses no uncertainty; with r = 0 it re-measures the same point indefinitely.';
   else if (c.strategy === 'pops-ucb') cap = 'Control: optimism on predicted response, POPS mean + 2·sd. Uses the same ensemble as PES, but targets response variance rather than x* entropy.';
   else cap = 'Expected improvement over the best posterior mean at the measured points (noisy-EI plug-in), ξ = 0.01·std(y).';
@@ -578,6 +581,7 @@ function drawStatus() {
     `recommendation x̂ = ${f(P.xPredOpt)}, regret ${f(S.opt.f - B.fTrue(P.xPredOpt, c.delta))}`,
   ];
   if (P.pops) lines.push(`model K = <b>${P.K}</b> (p = ${2 + 2 * P.K})${c.K === 'auto' ? ' by evidence' : ''}`, `ensemble: ${P.pops.popsMembers.length} POPS${P.pops.epistemic ? ' + epistemic' : ''} → ${P.st.M}, σ_lik = ${Math.sqrt(P.pops.sigma2).toFixed(3)}`);
+  if (P.st && P.st.disc) lines.push(`discrepancy GP: ℓ = ${P.st.disc.l.toFixed(3)}, τ = ${Math.sqrt(P.st.disc.tau2).toFixed(3)}`);
   if (P.gp) lines.push(`GP: ℓ = ${P.gp.l.toFixed(3)}, noise/s² = ${P.gp.g.toExponential(1)}`);
   $('status').innerHTML = lines.map(l => `<span>${l}</span>`).join('');
   $('step').disabled = S.t >= ITERS; $('run').disabled = S.t >= ITERS;
@@ -743,7 +747,7 @@ sel.value = 'pops-pes';
 $('delta').addEventListener('input', () => { $('deltaOut').textContent = (+$('delta').value).toFixed(2); });
 $('rho').addEventListener('input', () => { $('rhoOut').textContent = (+$('rho').value).toFixed(2); });
 $('spacing').addEventListener('input', () => { $('spacingOut').textContent = (+$('spacing').value).toFixed(3); });
-['strategy', 'delta', 'rho', 'period', 'noise', 'region', 'seed', 'variant', 'kslider', 'kauto', 'epi', 'spacing'].forEach(id => $(id).addEventListener('change', reset));
+['strategy', 'delta', 'rho', 'period', 'noise', 'region', 'seed', 'variant', 'kslider', 'kauto', 'epi', 'cond', 'spacing'].forEach(id => $(id).addEventListener('change', reset));
 const syncK = () => { $('kOut').textContent = $('kauto').checked ? 'auto' : $('kslider').value; $('kslider').disabled = $('kauto').checked;
   $('kBox').classList.toggle('dim', $('strategy').value.startsWith('gp')); };
 ['kslider', 'kauto', 'strategy'].forEach(id => $(id).addEventListener('input', syncK)); syncK();

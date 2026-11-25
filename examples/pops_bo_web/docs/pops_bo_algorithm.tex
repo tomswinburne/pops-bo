@@ -1,0 +1,198 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{framed}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\btheta}{\bm{\theta}}
+\newcommand{\bphi}{\bm{\phi}}
+\newcommand{\by}{\mathbf{y}}
+\newcommand{\br}{\mathbf{r}}
+\newcommand{\bk}{\mathbf{k}}
+
+\title{POPS-based Bayesian optimization with data-conditioned\\predictive entropy search}
+\author{Algorithm notes for the \texttt{pops-bo} interactive demo\\\small\texttt{examples/pops\_bo\_web} in \url{https://github.com/tomswinburne/pops-bo}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+These notes specify the algorithm implemented in \texttt{pops\_bo.js}. A structured but
+misspecified parametric surrogate is equipped with a POPS ensemble (pointwise optimal parameter
+sets) that represents model-form uncertainty. It is augmented with Bayesian-ridge epistemic draws, and
+its complexity is chosen by Bayesian evidence. Experiments are selected by an approximate
+predictive entropy search over the location of the optimum, following Lee \emph{et al.}~\cite{lee2026}.
+We add two changes. First, the hypothetical outcomes are conditioned on data already measured near
+the candidate through a discrepancy Gaussian process. Second, when the optimum location is resolved,
+the method switches to the expected improvement of the best measured value. Under that criterion
+replicate measurements have exactly zero value. Together these remove the repeated sampling of
+the same point that the unconditioned procedure exhibits.
+\end{abstract}
+
+\section{Problem and notation}
+We maximise an expensive, noisy response $y = f(x) + \epsilon$, with $\epsilon\sim\N(0,\sigma_n^2)$ and
+$\sigma_n$ known, over a candidate grid $\{x_g\}_{g=1}^{G}\subset[0,1]$. After $N$ experiments the data are
+$\mathcal D = \{(x_n,y_n)\}_{n=1}^N$. Performance is the \emph{best measured} regret
+$f^\star - \max_n f(x_n)$ (noise-free $f$ at the measured locations); we also report the regret of the
+recommendation $\hat x$.
+
+\paragraph{Toy problem.} $f(x) = 0.3x + \sin(\omega x + 0.3) + \delta\sum_{k=2}^{8}\rho^{k-2}\sin(k\omega x + \phi_k)$,
+with $\omega = 2\pi/P$, $\phi_k = 0.7 + 1.9(k-2)$, and defaults $P=0.45$, $\delta=0.3$, $\rho=0.6$, $\sigma_n=0.05$, $G=401$.
+Setting $\rho=0$ gives the original single-harmonic specification. Every surrogate below is misspecified for $\delta>0$.
+
+\section{Surrogate, prior and complexity}
+The surrogate with complexity $K$ has $p = 2+2K$ features,
+\begin{equation}
+f_{\btheta}(x) = \btheta^\top\bphi_K(x),\qquad
+\bphi_K(x) = \bigl(1,\,x,\,\sin\omega x,\,\cos\omega x,\,\dots,\,\sin K\omega x,\,\cos K\omega x\bigr)^\top .
+\end{equation}
+With prior $\btheta\sim\N(0,\tau^2 I)$ ($\tau=1$) and design matrix $\Phi\in\R^{N\times p}$, the posterior mode is the ridge solution
+\begin{equation}
+A = \Phi^\top\Phi + \lambda I,\quad \lambda = \sigma_n^2/\tau^2,\quad \btheta_* = A^{-1}\Phi^\top\by,\quad e_n = y_n - \bphi_n^\top\btheta_* .
+\end{equation}
+
+\paragraph{Model selection.} $K\in\{1,\dots,6\}$ is chosen at every step by maximising the log evidence
+\begin{equation}
+\log p(\by\mid K) = -\frac{\by^\top\by - \by^\top\Phi\btheta_*}{2\sigma_n^2} - \tfrac12\log|A| + \tfrac p2\log\lambda - \tfrac N2\log(2\pi\sigma_n^2),
+\end{equation}
+which equals $\log\N(\by;\,0,\,\sigma_n^2 I + \tau^2\Phi\Phi^\top)$. The Occam factor penalises unneeded harmonics. Misfit beyond the
+noise penalises too few. The selected $K$ grows with $N$.
+
+\section{Ensemble: POPS plus epistemic draws}
+\paragraph{POPS members (Lee \emph{et al.}\ Eq.~6; Swinburne \& Perez~\cite{pops2025}).} For each observation $i$,
+$\btheta_i = \arg\min_{\btheta} \|\Phi\btheta-\by\|^2 + \lambda\|\btheta\|^2$ subject to $\bphi_i^\top\btheta = y_i$. This has the
+closed form (rank-one correction)
+\begin{equation}
+\btheta_i = \btheta_* + \frac{e_i}{h_i}\,A^{-1}\bphi_i,\qquad h_i = \bphi_i^\top A^{-1}\bphi_i .
+\end{equation}
+The approximation of Lee \emph{et al.}, a refit with $10\times$ loss weight on point $i$, is available and gives indistinguishable results.
+
+\paragraph{Epistemic augmentation.} If $p\ge N$ the fit interpolates, $e_i\to 0$, and POPS alone would report a spuriously certain
+complex model. Following \texttt{popsregression} (misspecification $+$ epistemic variance), the ensemble has
+$M=\max(64,N)$ members
+\begin{equation}
+\btheta^{(m)} = \btheta_{i(m)} + \bm\xi_m,\qquad \bm\xi_m\sim\N(0,\sigma_n^2A^{-1}),\qquad i(m) = m \bmod N .
+\end{equation}
+
+\section{Conditioning outcomes on nearby data}
+\label{sec:disc}
+The approximate PES of Lee \emph{et al.}\ uses each member's prediction $f_{\btheta^{(k)}}(x)$ as a hypothetical outcome. Nothing in it
+knows that $y$ has already been measured at, or near, $x$, so it has no anti-locality. We write the observation model with a
+discrepancy term (Kennedy \& O'Hagan~\cite{ko2001}):
+\begin{equation}
+y(x) = f_{\btheta}(x) + d(x) + \epsilon,\qquad d\sim\mathcal{GP}\bigl(0,\,\tau_d^2\,e^{-(x-x')^2/2\ell^2}\bigr).
+\end{equation}
+Let $R_{nn'} = e^{-(x_n-x_{n'})^2/2\ell^2}$, $C = \tau_d^2R + \sigma_n^2 I$, and $\bk(x)_n = \tau_d^2e^{-(x-x_n)^2/2\ell^2}$.
+
+\paragraph{Hyperparameters.} The discrepancy must absorb the misfit that POPS asserts. We therefore fit $(\ell,\tau_d^2)$ to the
+residuals of the POPS members, $\br_i = \by - \Phi\btheta_i$, treated as independent draws, by grid search:
+\begin{equation}
+(\ell,\tau_d^2) = \arg\max \sum_{i=1}^{N}\log\N(\br_i;\,0,\,C).
+\end{equation}
+Fitting instead to the residuals of $\btheta_*$ alone gives $\tau_d\approx 0$ whenever the model fits within noise, and then no
+conditioning takes place.
+
+\paragraph{Conditioned member predictions.} For member $j$ with residuals $\br^{(j)} = \by - \Phi\btheta^{(j)}$:
+\begin{align}
+\mu_j(x) &= f_{\btheta^{(j)}}(x) + \bk(x)^\top C^{-1}\br^{(j)},\\
+s^2_{\rm lat}(x) &= \tau_d^2 - \bk(x)^\top C^{-1}\bk(x),\qquad s^2(x) = s^2_{\rm lat}(x) + \sigma_n^2,\\
+c(x,x') &= \tau_d^2 e^{-(x-x')^2/2\ell^2} - \bk(x)^\top C^{-1}\bk(x').
+\end{align}
+Near a measured $x_n$ every $\mu_j(x)$ is pulled to $y_n$ and $s^2$ shrinks to the noise. Far from data, $\mu_j\to f_{\btheta^{(j)}}$
+and $s^2\to\tau_d^2+\sigma_n^2$, which recovers the paper's rule with likelihood width $\sigma^2_{\rm lik}\approx\tau_d^2+\sigma_n^2$.
+
+\paragraph{Base weights.} With $i(j)$ the POPS parent of member $j$ and $c_i = |\{j: i(j)=i\}|$:
+\begin{equation}
+\log w^0_j = -\tfrac12\,\br_{i(j)}^\top C^{-1}\br_{i(j)} - \log c_{i(j)} + \text{const},\qquad \textstyle\sum_j w^0_j = 1 .
+\end{equation}
+Epistemic children share their parent's weight; re-weighting posterior draws by the data would double count.
+Without conditioning the paper's form $-\|\br_{i(j)}\|^2/2\sigma^2_{\rm lik}$ is used, with $\sigma^2_{\rm lik} = \max(\mathrm{RSS}/(N-p),\sigma_n^2)$.
+
+\section{Acquisition}
+\paragraph{Predicted optima (Eq.~7).} $x^*_j = \arg\max_g \mu_j(x_g)$, and $H_0 = \tfrac12\log\bigl(2\pi e[\Var_{w^0}(x^*)+\varepsilon]\bigr)$,
+with $\varepsilon = 0.01^2$, the resolution at which $x^*$ matters.
+
+\paragraph{Data-conditioned approximate PES (Eqs.~8--12).} For candidate $x$ and each hypothetical outcome $y_k = \mu_k(x)$:
+\begin{align}
+\log w'_{j\mid k}(x) &= \log w^0_j - \frac{(\mu_j(x)-y_k)^2}{2s^2(x)}\quad\text{(normalised by log-sum-exp)},\\
+H_k(x) &= \tfrac12\log\bigl(2\pi e\,[\Var_{w'_{\cdot\mid k}}(x^*)+\varepsilon]\bigr),\qquad
+\alpha_{\rm PES}(x) = H_0 - \sum_k w^0_k H_k(x).
+\end{align}
+Only the weights change during acquisition; the ensemble is refitted after the real measurement. At a measured point all
+$\mu_j$ coincide up to noise, so no member is reweighted and $\alpha_{\rm PES}\approx 0$.
+
+\paragraph{Resolved optimum: improvement of the best measured value.} If $\max_x\alpha_{\rm PES}(x) < \gamma$ ($\gamma=0.05$ nats),
+the members agree on $x^*$ to within $\varepsilon$ and PES has nothing left to resolve. The objective is the best \emph{measured}
+value, so under hypothesis $j$ the gain from measuring $x$ is $\max\bigl(f_j(x)-\max_n f_j(x_n),\,0\bigr)$. With
+$n_j = \arg\max_n\mu_j(x_n)$ and the Gaussian discrepancy,
+\begin{equation}
+\alpha_{\rm EI}(x) = \sum_j w^0_j\,\mathrm{EI}\bigl(\mu_j(x)-\mu_j(x_{n_j}),\;v_j(x)\bigr),\qquad
+v_j(x) = s^2_{\rm lat}(x)+s^2_{\rm lat}(x_{n_j}) - 2c(x,x_{n_j}),
+\end{equation}
+where $\mathrm{EI}(d,v) = d\,\Phi(d/\sqrt v) + \sqrt v\,\varphi(d/\sqrt v)$. Because $f(x_m)\le\max_n f(x_n)$ for every measured $x_m$ and every
+realisation, we set $\alpha_{\rm EI}(x_m)=0$ exactly. The variance of the \emph{difference} vanishes as $x\to x_{n_j}$, so
+the criterion favours unmeasured points next to the peak and assigns no value to replicates. If $\alpha_{\rm EI}\equiv 0$ the
+most informative candidate $\arg\max\alpha_{\rm PES}$ is measured.
+
+\paragraph{Recommendation.} $\hat x = \arg\max_g\sum_j w^0_j\mu_j(x_g)$.
+
+\begin{framed}
+\noindent\textbf{Algorithm (one BO step).} Input $\mathcal D$, $\sigma_n$, grid.
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+\item Choose $K$ by the evidence (Eq.~3); form $A$, $\btheta_*$, $e_n$, $h_n$.
+\item POPS members $\btheta_i$ (Eq.~4); ensemble $\btheta^{(m)} = \btheta_{i(m)}+\bm\xi_m$ (Eq.~5).
+\item Fit $(\ell,\tau_d^2)$ to the POPS residuals (Eq.~7); compute $\mu_j$, $s^2$, $s^2_{\rm lat}$, $c$ (Eqs.~8--10) and $w^0$ (Eq.~11).
+\item $x^*_j$, $H_0$; evaluate $\alpha_{\rm PES}(x_g)$ for all $g$ (Eqs.~12--13).
+\item If $\max\alpha_{\rm PES}\ge\gamma$: measure $\arg\max\alpha_{\rm PES}$; ties are broken by the highest ensemble mean.
+\item Else: measure $\arg\max\alpha_{\rm EI}$ (Eq.~14, zero at measured points); if $\alpha_{\rm EI}\equiv0$, measure $\arg\max\alpha_{\rm PES}$.
+\item Observe $y$, append to $\mathcal D$, refit from step 1.
+\end{enumerate}
+Cost per step is $O(GM^2)$ for PES, with $G=401$ and $M=64$, plus $O(N^3)$ grid fits; this is under 50\,ms in a browser.
+\end{framed}
+
+\section{Baselines and controls}
+\begin{itemize}[itemsep=1pt]
+\item \textbf{Greedy $\btheta_*$}: $\arg\max$ of the conditioned $\btheta_*$ prediction; the no-uncertainty ablation.
+\item \textbf{POPS + UCB}: ensemble mean $+2\times$ ensemble sd; this uses response variance, not $x^*$ entropy.
+\item \textbf{GP-RBF + EI}: stationary GP, with hyperparameters by marginal likelihood and noise $\ge\sigma_n^2/2$; noisy EI.
+\item \textbf{GP-periodic + EI}: periodic kernel with known $P$ plus a linear term. It has the same structural prior without a fixed form.
+\item \textbf{Paper-literal PES}: grid-scale $\varepsilon$, no conditioning, no exploitation rule.
+\item \textbf{Minimum spacing}: an optional hard exclusion radius $r$. This was the earlier heuristic fix for repeats; $r=0$ by default.
+\end{itemize}
+All strategies share, per seed, the initial design (8 points, stratified in $[0,0.5]$) and the noise draws.
+
+\section{Results}
+\label{sec:results}
+40 seeds, 15 iterations. These tables are generated from \texttt{results.json} by \texttt{docs/make\_tables.js}.
+\input{results_tables.tex}
+
+\section{Limitations}
+\begin{itemize}[itemsep=1pt]
+\item The Gaussian entropy is crude for a multimodal $x^*$ distribution. Early on, disagreement between distant peaks dominates.
+\item The conditioning adds a nonparametric component. With many local data the method approaches a GP with a parametric mean.
+\item Discrepancy hyperparameters are point estimates on a grid.
+\item If the initial data span less than one period, all members can agree on a wrong peak ($H_0\approx 0$).
+\item The equation numbering for Lee \emph{et al.}\ follows the specification we were given; the preprint could not be retrieved while
+these notes were written.
+\end{itemize}
+
+\begin{thebibliography}{9}
+\bibitem{lee2026} J.~Lee, L.~J.~Augustine, P.~Yang, and D.~Perez,
+\emph{Efficient Bayesian Optimization of Separation Chemistry in the Scarce-Data Regime Using Kinetic Reaction Networks},
+ChemRxiv preprint (2026). \href{https://doi.org/10.26434/chemrxiv.15004837/v2}{doi:10.26434/chemrxiv.15004837/v2}.
+\bibitem{pops2025} T.~D.~Swinburne and D.~Perez,
+\emph{Parameter uncertainties for imperfect surrogate models in the low-noise regime},
+Mach.\ Learn.: Sci.\ Technol.\ (2025). \href{https://doi.org/10.1088/2632-2153/ad9fce}{doi:10.1088/2632-2153/ad9fce}.
+\bibitem{ko2001} M.~C.~Kennedy and A.~O'Hagan, \emph{Bayesian calibration of computer models}, J.\ R.\ Stat.\ Soc.\ B \textbf{63}, 425 (2001).
+\bibitem{pes2014} J.~M.~Hern\'andez-Lobato, M.~W.~Hoffman, and Z.~Ghahramani, \emph{Predictive entropy search for efficient global optimization of black-box functions}, NeurIPS (2014).
+\bibitem{jones1998} D.~R.~Jones, M.~Schonlau, and W.~J.~Welch, \emph{Efficient global optimization of expensive black-box functions}, J.\ Global Optim.\ \textbf{13}, 455 (1998).
+\end{thebibliography}
+\end{document}
