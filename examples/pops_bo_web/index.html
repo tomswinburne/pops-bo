@@ -193,6 +193,10 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule)
     <input id="seed" type="number" min="1" max="9999" step="1" value="3">
   </div>
   <div class="ctl">
+    <label for="spacing">Minimum spacing <span class="sym">r</span> <output id="spacingOut">0.005</output></label>
+    <input id="spacing" type="range" min="0" max="0.04" step="0.005" value="0.005">
+  </div>
+  <div class="ctl">
     <label for="variant">POPS construction</label>
     <select id="variant">
       <option value="exact" selected>Exact constraint (rank-one)</option>
@@ -392,6 +396,7 @@ const cfgFromUI = () => ({
   popsVariant: $('variant').value,
   K: $('kauto').checked ? 'auto' : +$('kslider').value,
   epistemic: $('epi').checked,
+  minSpacing: +$('spacing').value,
   iters: ITERS, grid: GRID,
 });
 let S = null, P = null, ghosts = {}, ghostTimer = null;
@@ -524,14 +529,25 @@ function drawAcq() {
     p.dot(GRID[ig], hi, 3.5, { fill: css('--muted') });
     items.push(['POPS predictive sd (rescaled)', css('--muted'), 'dash']);
   }
+  if (P.minSpacing > 0) {
+    // shade candidates excluded by the minimum-spacing rule
+    let g0 = -1;
+    for (let g = 0; g <= GRID.length; g++) {
+      const ex = g < GRID.length && !P.eligible[g];
+      if (ex && g0 < 0) g0 = g;
+      if (!ex && g0 >= 0) { el('rect', { x: p.X(GRID[g0]) - 1, y: p.m.t, width: Math.max(2, p.X(GRID[g - 1]) - p.X(GRID[g0]) + 2), height: p.H - p.m.t - p.m.b, fill: css('--muted'), 'fill-opacity': 0.18 }, p.body); g0 = -1; }
+    }
+    items.push([`within r = ${P.minSpacing} of a previous experiment`, css('--muted'), 'band']);
+  }
   p.line(GRID, a, { stroke: col, 'stroke-width': 2 });
   if (S.t < ITERS) { p.vline(P.xNext, { stroke: css('--next'), 'stroke-width': 1.5 }); p.dot(P.xNext, a[P.next], 4.5, { fill: css('--next'), top: true }); }
   legend($('legAcq'), items);
   let cap = '';
-  if (P.pes) cap = `Expected reduction in the Gaussian-approximated entropy of x* (Eqs. 7–12): each candidate x is scored by reweighting the ensemble for every hypothetical outcome y_j = f_θj(x), without refitting. ` + (P.tieBreak ? 'All members agree on x* to within the ε resolution, so the information gain is below threshold and the highest predicted mean is measured instead.' : 'The peak of this curve is generally not where the predictive sd (grey) peaks.');
-  else if (c.strategy === 'greedy') cap = 'Greedy measures the maximum of the single least-squares fit θ*. It uses no uncertainty, so it can keep re-measuring the same point.';
+  if (P.pes) cap = `Expected reduction in the Gaussian-approximated entropy of x* (Eqs. 7–12): each candidate x is scored by reweighting the ensemble for every hypothetical outcome y_j = f_θj(x), without refitting. ` + (P.tieBreak ? 'All members agree on x* to within the ε resolution, so the information gain is below threshold and the highest predicted mean among eligible candidates is measured instead.' : 'The peak of this curve is generally not where the predictive sd (grey) peaks.');
+  else if (c.strategy === 'greedy') cap = 'Greedy measures the maximum of the single least-squares fit θ*. It uses no uncertainty; with r = 0 it re-measures the same point indefinitely.';
   else if (c.strategy === 'pops-ucb') cap = 'Control: optimism on predicted response, POPS mean + 2·sd. Uses the same ensemble as PES, but targets response variance rather than x* entropy.';
   else cap = 'Expected improvement over the best posterior mean at the measured points (noisy-EI plug-in), ξ = 0.01·std(y).';
+  if (P.minSpacing > 0) cap += ` Shaded: candidates within r = ${P.minSpacing} of a previous experiment, which are not eligible (anti-locality; set r = 0 to switch it off).`;
   $('capAcq').textContent = cap;
 }
 
@@ -727,7 +743,8 @@ for (const s of ORDER) { const o = document.createElement('option'); o.value = s
 sel.value = 'pops-pes';
 $('delta').addEventListener('input', () => { $('deltaOut').textContent = (+$('delta').value).toFixed(2); });
 $('rho').addEventListener('input', () => { $('rhoOut').textContent = (+$('rho').value).toFixed(2); });
-['strategy', 'delta', 'rho', 'period', 'noise', 'region', 'seed', 'variant', 'kslider', 'kauto', 'epi'].forEach(id => $(id).addEventListener('change', reset));
+$('spacing').addEventListener('input', () => { $('spacingOut').textContent = (+$('spacing').value).toFixed(3); });
+['strategy', 'delta', 'rho', 'period', 'noise', 'region', 'seed', 'variant', 'kslider', 'kauto', 'epi', 'spacing'].forEach(id => $(id).addEventListener('change', reset));
 const syncK = () => { $('kOut').textContent = $('kauto').checked ? 'auto' : $('kslider').value; $('kslider').disabled = $('kauto').checked;
   $('kBox').classList.toggle('dim', $('strategy').value.startsWith('gp')); };
 ['kslider', 'kauto', 'strategy'].forEach(id => $(id).addEventListener('input', syncK)); syncK();

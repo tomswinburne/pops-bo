@@ -459,6 +459,18 @@
     const grid = cfg.grid; let s = cfg.strategy;
     if (s === 'pops-pes-raw') { cfg = { ...cfg, eps: (grid[1] - grid[0]) ** 2 / 12, gainTol: 0 }; s = 'pops-pes'; }
     const out = { strategy: s };
+    // Anti-locality: candidates closer than r = minSpacing to any previous experiment are not
+    // eligible for the NEXT experiment (the recommendation x_hat is unaffected). A repeat
+    // measurement only re-averages noise; under misspecification the nearby points carry the
+    // information the model cannot represent. Falls back to all candidates if none are eligible.
+    const r = cfg.minSpacing != null ? cfg.minSpacing : 0.005;
+    const eligible = new Uint8Array(grid.length).fill(1);
+    if (r > 0) {
+      for (let g = 0; g < grid.length; g++) for (const x of xs) if (Math.abs(grid[g] - x) < r) { eligible[g] = 0; break; }
+      if (!eligible.some(v => v)) eligible.fill(1);
+    }
+    const pick = a => { let b = -1; for (let g = 0; g < a.length; g++) if (eligible[g] && (b < 0 || a[g] > a[b])) b = g; return b; };
+    out.eligible = eligible; out.minSpacing = r;
     if (s.startsWith('pops') || s === 'greedy') {
       const lam = cfg.lambda != null ? cfg.lambda : defaultLambda(cfg.noise, cfg.tau);
       let K = cfg.K || 1;
@@ -473,13 +485,13 @@
       out.mean = stats.mean;
       if (s === 'greedy') {
         out.acq = thetaCurve; out.acqLabel = 'f_θ*(x) (maximise)';
-        out.next = argmax(thetaCurve);
-        out.predOpt = out.next;
+        out.next = pick(thetaCurve);
+        out.predOpt = argmax(thetaCurve);
       } else if (s === 'pops-ucb') {
         const beta = cfg.ucbBeta != null ? cfg.ucbBeta : 2;
         out.acq = Float64Array.from(stats.mean, (m, g) => m + beta * stats.sd[g]);
         out.acqLabel = 'mean + ' + beta + '·sd (maximise)';
-        out.next = argmax(out.acq);
+        out.next = pick(out.acq);
         out.predOpt = argmax(stats.mean);
       } else {
         // eps: variance floor = squared resolution at which we care about x* (default 0.01^2)
@@ -488,17 +500,17 @@
         out.pes = pes;
         out.acq = pes.gain; out.acqLabel = 'H[x*] − E[H[x*] | y(x)]  (maximise)';
         let mx = -Infinity, mn = Infinity;
-        for (const v of pes.gain) { if (v > mx) mx = v; if (v < mn) mn = v; }
+        for (let g = 0; g < grid.length; g++) if (eligible[g]) { const v = pes.gain[g]; if (v > mx) mx = v; if (v < mn) mn = v; }
         out.predOpt = argmax(stats.mean);
         // Converged / tied: every member agrees on x* to within the resolution eps, so no
         // candidate is informative -> exploit the highest predicted mean.
         const tol = cfg.gainTol != null ? cfg.gainTol : 0.05;
-        if (mx - mn < 1e-9 || mx < tol) { out.next = out.predOpt; out.tieBreak = true; }
+        if (mx - mn < 1e-9 || mx < tol) { out.next = pick(stats.mean); out.tieBreak = true; }
         else {
           // ties within tolerance: highest predicted mean among the top acquisition values
           let best = -1;
           for (let g = 0; g < grid.length; g++) {
-            if (pes.gain[g] >= mx - 1e-9 && (best < 0 || stats.mean[g] > stats.mean[best])) best = g;
+            if (eligible[g] && pes.gain[g] >= mx - 1e-9 && (best < 0 || stats.mean[g] > stats.mean[best])) best = g;
           }
           out.next = best;
         }
@@ -513,9 +525,9 @@
       const ei = expectedImprovement(pred, inc, xi);
       out.gp = gp; out.pred = pred; out.mean = pred.mean;
       out.acq = ei; out.acqLabel = 'expected improvement (maximise)';
-      out.next = argmax(ei);
       out.predOpt = argmax(pred.mean);
-      if (Math.max(...ei) < 1e-12) out.next = out.predOpt;
+      out.next = pick(ei);
+      if (ei[out.next] < 1e-12) out.next = pick(pred.mean);
     }
     out.xNext = grid[out.next];
     out.xPredOpt = grid[out.predOpt];
